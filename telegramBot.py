@@ -27,6 +27,8 @@ from database import (
     ottieni_annunci_utente,
     segna_come_venduto,
     ottieni_annunci_non_venduti,
+    ottieni_categorie_attive,
+    ottieni_piattaforme_attive,
     elimina_annuncio
 )
 from aiService import ad_text_generator
@@ -35,9 +37,9 @@ from aiService import parse_risposta_ai
 load_dotenv()
 TOKEN   = os.getenv("TOKEN")
 
-ATTESA_FOTO, ATTESA_CATEGORIA, ATTESA_DATA = range(3)
+ATTESA_FOTO, ATTESA_CATEGORIA, ATTESA_PIATTAFORMA, ATTESA_DATA = range(4)
 
-VENDI_ATTESA_SCELTA, VENDI_ATTESA_PREZZO = range(2,4);
+VENDI_ATTESA_SCELTA, VENDI_ATTESA_PREZZO = range(4,6)
 
 T_CREA = "🆕 Crea Annuncio"
 T_LISTA = "🛍️ I Miei Annunci"
@@ -63,14 +65,29 @@ def crea_menu_principale() -> ReplyKeyboardMarkup:
 #Funzione che crea i tasti per la categoria
 def crea_tastiera_categorie():
     """Crea una tastiera con le categorie prese dal DB."""
-    pulsanti = [
-        [InlineKeyboardButton("👕 Abbigliamento", callback_data="cat_1")],
-        [InlineKeyboardButton("🔌 Elettronica", callback_data="cat_2")],
-        [InlineKeyboardButton("📚 Libri/Hobby", callback_data="cat_3")],
-        [InlineKeyboardButton("🏠 Casa", callback_data="cat_4")],
-        [InlineKeyboardButton("Altro", callback_data="cat_5")],
-    ]
+    pulsanti = []
+    categorie = ottieni_categorie_attive()
+    
+    for cat in categorie:
+        pulsanti.append([
+            InlineKeyboardButton(cat['nome'], callback_data=f"cat_{cat['id']}")
+        ])
+
     return InlineKeyboardMarkup(pulsanti)
+
+#Funzione che crea i tasti per la piattaforma
+def crea_tastiera_piattaforme():
+    """Crea una tastiera con le piattaforme prese dal DB."""
+    pulsanti = []
+    piattaforme = ottieni_piattaforme_attive()
+    
+    for p in piattaforme:
+        pulsanti.append([
+            InlineKeyboardButton(p['nome'], callback_data=f"piat_{p['id']}")
+        ])
+
+    return InlineKeyboardMarkup(pulsanti)
+
 
 #Funzione di inizio bot
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -339,14 +356,13 @@ async def ricevi_categoria(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     # Estraiamo l'ID della categoria dal pulsante (es. "cat_1" -> "1")
     id_categoria_scelta = int(query.data.split('_')[1])
     context.user_data['id_categoria_scelta'] = id_categoria_scelta
-    await query.edit_message_text(text=f"✅ Categoria scelta! Ora dimmi quando vuoi programmare l'annuncio.")
-    
-    await context.bot.send_message(
-        chat_id=query.message.chat_id,
-        text="Scrivimi una data e un'ora (es: 'domani alle 15:00', '25 ottobre 10:30', o 'tra 2 ore')."
+    await query.edit_message_text(
+        text=f"✅ Categoria scelta! Ora dimmi quando vuoi programmare l'annuncio.",
+        reply_markup=crea_tastiera_piattaforme()
     )
+    
     # Diciamo al ConversationHandler di passare allo stato "ATTESA_DATA"
-    return ATTESA_DATA
+    return ATTESA_PIATTAFORMA
 
 #Funzione che riceve la data e la inserisce all'annuncio
 async def ricevi_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -368,6 +384,7 @@ async def ricevi_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     # Recuperiamo i dati dalla memoria
     id_annuncio = context.user_data.get('id_annuncio_corrente')
     id_categoria = context.user_data.get('id_categoria_scelta')
+    id_piattaforma = context.user_data.get('id_piattaforma_scelta')
 
     if not id_annuncio or not id_categoria:
         await update.message.reply_text("Si è verificato un errore, i dati dell'annuncio sono andati persi. Riprova con /start.")
@@ -375,7 +392,7 @@ async def ricevi_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return ConversationHandler.END
 
     # Aggiorniamo il database con TUTTE le informazioni
-    aggiorna_annuncio_con_programmazione(id_annuncio, id_categoria, data_programmata)
+    aggiorna_annuncio_con_programmazione(id_annuncio, id_categoria, id_piattaforma, data_programmata)
 
     await update.message.reply_text(
         f"Perfetto! 👍 Annuncio {id_annuncio} salvato e programmato per:\n"
@@ -386,6 +403,29 @@ async def ricevi_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     
     context.user_data.clear()
     return ConversationHandler.END
+
+async def ricevi_piattaforma(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Riceve la piattaforma e chiede la data di programmazione.
+    """
+    query = update.callback_query
+    await query.answer() 
+
+    id_piattaforma_scelta = int(query.data.split('_')[1])
+
+    # Salviamo la piattaforma nello "zainetto"
+    context.user_data['id_piattaforma_scelta'] = id_piattaforma_scelta
+
+    # Modifichiamo il messaggio e chiediamo la data
+    await query.edit_message_text(text=f"✅ Piattaforma scelta!")
+
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text="Scrivimi una data e un'ora per la programmazione (es: 'domani alle 15:00')."
+    )
+
+    # Passiamo allo stato ATTESA_DATA
+    return ATTESA_DATA
 
 #Funzione che annulla l'azione che si sta facendo
 async def annulla(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -467,6 +507,9 @@ def bot_start(): # o avvia_bot()
             ],
             ATTESA_CATEGORIA: [
                 CallbackQueryHandler(ricevi_categoria, pattern="^cat_") 
+            ],
+            ATTESA_PIATTAFORMA: [
+                CallbackQueryHandler(ricevi_piattaforma, pattern="^piat_")
             ],
             ATTESA_DATA: [
                 MessageHandler(filters.Text([T_LISTA, T_ANALISI, T_VENDI, T_CREA]), gestisci_testo_sconosciuto_in_conversazione),

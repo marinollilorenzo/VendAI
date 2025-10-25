@@ -145,16 +145,14 @@ def add_annuncement(id_utente, descrizione_input, titolo_generato, descrizione_g
     return nuovo_id
 
 
-def aggiorna_annuncio_con_programmazione(id_annuncio, id_categoria, data_pubblicazione):
+def aggiorna_annuncio_con_programmazione(id_annuncio, id_categoria, id_piattaforma, data_pubblicazione):
     """
     Aggiorna un annuncio esistente con la categoria scelta e la data di programmazione.
     Imposta lo stato a 2 ('pubblicato').
     """
     connessione = sqlite3.connect("annunci.db")
     cursore = connessione.cursor()
-
-    # Per ora impostiamo la piattaforma a 1 (Vinted)
-    id_piattaforma_default = 1 
+ 
     id_stato_pubblicato = 2 # Lo stato 'pubblicato'
 
     sql_aggiorna = """
@@ -170,7 +168,7 @@ def aggiorna_annuncio_con_programmazione(id_annuncio, id_categoria, data_pubblic
     dati = (
         id_stato_pubblicato, 
         id_categoria, 
-        id_piattaforma_default, 
+        id_piattaforma, 
         data_pubblicazione, 
         id_annuncio
     )
@@ -391,6 +389,31 @@ def elimina_annuncio(id_utente, id_annuncio):
         print(f"Errore in elimina_annuncio: {e}")
         connessione.close()
         return False
+
+def ottieni_categorie_attive():
+    """Recupera tutte le categorie dalla tabella 'stati'."""
+    connessione = sqlite3.connect('annunci.db')
+    connessione.row_factory = sqlite3.Row
+    cursore = connessione.cursor()
     
+    # Ordiniamo per nome
+    cursore.execute("SELECT id, nome FROM categoria ORDER BY nome;")
+    
+    categorie = cursore.fetchall()
+    connessione.close()
+    return [dict(cat) for cat in categorie]
+
+def ottieni_piattaforme_attive():
+    """Recupera tutte le piattaforme dalla tabella 'piattaforme'."""
+    connessione = sqlite3.connect('annunci.db')
+    connessione.row_factory = sqlite3.Row
+    cursore = connessione.cursor()
+    
+    cursore.execute("SELECT id, nome FROM piattaforma ORDER BY nome;")
+    
+    piattaforme = cursore.fetchall()
+    connessione.close()
+    return [dict(p) for p in piattaforme]
+
 if __name__ == '__main__':
     db_initialization()
