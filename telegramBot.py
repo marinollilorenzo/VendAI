@@ -1,5 +1,8 @@
 import os
 from dotenv import load_dotenv
+import dateparser
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.helpers import escape_markdown
 from telegram.ext import (
     Application, 
     CommandHandler, 
@@ -9,17 +12,19 @@ from telegram.ext import (
     ConversationHandler,
     CallbackQueryHandler
 )
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.helpers import escape_markdown
+from database import (
+    add_annuncement, 
+    aggiorna_annuncio_con_programmazione, 
+    ottieni_statistiche_stati,
+    get_or_create_user
+)
 from aiService import ad_text_generator
 from aiService import parse_risposta_ai
-from database import add_annuncement, aggiorna_categoria_annuncio
-
 
 load_dotenv()
 TOKEN   = os.getenv("TOKEN")
 
-ATTESA_DESCRIZIONE, ATTESA_CATEGORIA = range(2)
+ATTESA_CATEGORIA, ATTESA_DATA = range(2)
 
 def crea_tastiera_categorie():
     """Crea una tastiera con le categorie prese dal DB."""
@@ -38,7 +43,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
         "Ciao! Sono il tuo assistente per creare annunci.\n"
         "Puoi inviarmi una **foto con didascalia** per iniziare.\n\n"
-        "Oppure usa il comando /nuovo seguito dalla descrizione (solo testo).\n\n"
+        "Oppure usa il comando /nuovo seguito dalla descrizione (solo testo).\n"
+        "Il comando /analisi ti fa un analisi degli annunci che hai nel database\n\n"
         "Puoi annullare in qualsiasi momento con /annulla.",
         parse_mode='Markdown'
     )
@@ -57,6 +63,38 @@ async def nuovo_annuncio_handler(update: Update, context: ContextTypes.DEFAULT_T
     # Chiama la funzione che processa e chiede la categoria
     return await processa_e_chiedi_categoria(descrizione_input, update, context, foto_bytes=None)
 
+async def analisi_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Fornisce un riepilogo degli annunci nel database
+    quando l'utente invia /analisi.
+    """
+    print("Ricevuto comando /analisi")
+    user = update.message.from_user
+    id_telegram = user.id
+    nome_telegram = user.first_name
+    id_utente_db = get_or_create_user(id_telegram, nome_telegram)
+    try:
+        statistiche = ottieni_statistiche_stati(id_utente_db)
+
+        if not statistiche:
+            await update.message.reply_text("Nessun annuncio ancora nel database.")
+            return
+
+        messaggio_risposta = "📊 **Statistiche Annunci** 📊\n\n"
+        messaggio_risposta += "Ecco un riepilogo dei tuoi annunci per stato:\n"
+        
+        totale_annunci = 0
+        for stato in statistiche:
+            messaggio_risposta += f"  - **{stato['nome_stato'].capitalize()}**: {stato['conteggio']} annunci\n"
+            totale_annunci += stato['conteggio']
+        
+        messaggio_risposta += f"\n**Totale Annunci:** {totale_annunci}"
+
+        await update.message.reply_text(messaggio_risposta, parse_mode='Markdown')
+
+    except Exception as e:
+        print(f"Errore durante /analisi: {e}")
+        await update.message.reply_text(f"Si è verificato un errore durante la generazione delle statistiche: {e}")
 
 async def foto_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handler per la foto con didascalia."""
@@ -77,18 +115,24 @@ async def foto_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     # Chiama la funzione che processa e chiede la categoria
     return await processa_e_chiedi_categoria(descrizione_input, update, context, foto_bytes=foto_bytes)
 
-
 async def processa_e_chiedi_categoria(descrizione_input: str, update: Update, context: ContextTypes.DEFAULT_TYPE, foto_bytes: bytearray = None) -> int:
     """
     genera l'annuncio, lo salva in bozza, chiede all'utente la categoria, entrando nello stato ATTESA_CATEGORIA.
     """
     await update.message.reply_text(f"✍️ Ricevuto: '{descrizione_input}'.\nSto analizzando testo e immagine con l'IA, attendi...")
-
+    #autentificazione utente
+    user = update.message.from_user
+    id_telegram = user.id
+    nome_telegram = user.first_name
+    id_utente_db = get_or_create_user(id_telegram, nome_telegram)
+    
+    
     testo_grezzo_ai = await ad_text_generator(descrizione_input, foto_bytes)
     titolo, descrizione, prezzo = parse_risposta_ai(testo_grezzo_ai)
     
     # Salviamo l'annuncio in bozza (categoria e piattaforma sono ancora vuote/default)
     nuovo_id = add_annuncement(
+        id_utente=id_utente_db,
         descrizione_input=descrizione_input,
         titolo_generato=titolo,
         descrizione_generata=descrizione,
@@ -119,7 +163,6 @@ async def processa_e_chiedi_categoria(descrizione_input: str, update: Update, co
     # Diciamo al ConversationHandler di passare allo stato "ATTESA_CATEGORIA"
     return ATTESA_CATEGORIA
 
-
 async def ricevi_categoria(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
     Questa funzione si attiva quando l'utente preme un pulsante di categoria.
@@ -129,25 +172,53 @@ async def ricevi_categoria(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     # Estraiamo l'ID della categoria dal pulsante (es. "cat_1" -> "1")
     id_categoria_scelta = int(query.data.split('_')[1])
+    context.user_data['id_categoria_scelta'] = id_categoria_scelta
+    await query.edit_message_text(text=f"✅ Categoria scelta! Ora dimmi quando vuoi programmare l'annuncio.")
     
-    # Recuperiamo l'ID dell'annuncio dalla memoria della conversazione
-    id_annuncio = context.user_data.get('id_annuncio_corrente')
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text="Scrivimi una data e un'ora (es: 'domani alle 15:00', '25 ottobre 10:30', o 'tra 2 ore')."
+    )
+    # Diciamo al ConversationHandler di passare allo stato "ATTESA_DATA"
+    return ATTESA_DATA
 
-    if not id_annuncio:
-        await query.edit_message_text(text="Si è verificato un errore, non trovo l'annuncio da aggiornare. Riprova con /start.")
+async def ricevi_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Questa funzione si attiva quando l'utente invia un testo nello stato ATTESA_DATA.
+    """
+    testo_data = update.message.text
+    
+    # Usiamo dateparser per "capire" il testo
+    data_programmata = dateparser.parse(testo_data, languages=['it'])
+
+    if not data_programmata:
+        # L'utente ha scritto qualcosa che non capiamo
+        await update.message.reply_text(
+            "Non ho capito la data. 😅 Riprova con un formato più semplice (es. 'domani alle 15:00')."
+        )
+        return ATTESA_DATA # Rimaniamo nello stesso stato
+
+    # Recuperiamo i dati dalla memoria
+    id_annuncio = context.user_data.get('id_annuncio_corrente')
+    id_categoria = context.user_data.get('id_categoria_scelta')
+
+    if not id_annuncio or not id_categoria:
+        await update.message.reply_text("Si è verificato un errore, i dati dell'annuncio sono andati persi. Riprova con /start.")
+        context.user_data.clear()
         return ConversationHandler.END
 
-    # Aggiorniamo il database!
-    aggiorna_categoria_annuncio(id_annuncio, id_categoria_scelta)
+    # Aggiorniamo il database con TUTTE le informazioni
+    aggiorna_annuncio_con_programmazione(id_annuncio, id_categoria, data_programmata)
 
-    # Modifichiamo il messaggio dei pulsanti con la conferma
-    await query.edit_message_text(text=f"Perfetto! Annuncio {id_annuncio} salvato e impostato come 'pubblicato' nella categoria scelta.")
+    await update.message.reply_text(
+        f"Perfetto! 👍 Annuncio {id_annuncio} salvato e programmato per:\n"
+        f"**{data_programmata.strftime('%d %B %Y alle %H:%M')}**",
+        parse_mode='Markdown'
+    )
     
-    # Puliamo la memoria
     context.user_data.clear()
-    
-    # Diciamo al ConversationHandler che questa conversazione è FINITA
     return ConversationHandler.END
+
 
 
 async def annulla(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -174,6 +245,10 @@ def bot_start():
             ATTESA_CATEGORIA: [
                 CallbackQueryHandler(ricevi_categoria) # Ascolta solo i click sui pulsanti
             ],
+            ATTESA_DATA: [
+                # Ascolta qualsiasi messaggio di testo
+                MessageHandler(filters.TEXT & ~filters.COMMAND, ricevi_data)
+            ]
         },
         fallbacks=[
             CommandHandler("annulla", annulla) # Permette di uscire con /annulla
@@ -186,6 +261,8 @@ def bot_start():
     # Aggiungiamo un handler /start "di riserva" fuori dalla conversazione
     # per sbloccare il bot se si dovesse incastrare
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("analisi", analisi_handler))
+    
 
     print("Bot avviato e in ascolto... (modalità conversazione attiva!)")
     application.run_polling()

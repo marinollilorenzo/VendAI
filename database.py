@@ -26,9 +26,19 @@ def db_initialization():
         nome TEXT NOT NULL UNIQUE
     );
     """)
+    
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS utente (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        telegram_user_id INTEGER NOT NULL UNIQUE,
+        nome_utente TEXT
+    );
+    """)
+    
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS annuncio(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id_utente INTEGER NOT NULL,
         descrizione_input TEXT NOT NULL,
         titolo_generato TEXT,
         descrizione_generata TEXT,
@@ -43,9 +53,16 @@ def db_initialization():
         FOREIGN KEY (id_stato) REFERENCES stato (id),
         FOREIGN KEY (id_categoria) REFERENCES categoria (id),
         FOREIGN KEY (id_piattaforma) REFERENCES piattaforma (id)
+        FOREIGN KEY (id_utente) REFERENCES utente (id)
     );
     """)
-    stati_iniziali = [('bozza',), ('pubblicato',), ('venduto',)]
+    stati_iniziali = [
+        ('bozza',),          # 1
+        ('programmato',),    # 2 (impostato dal bot)
+        ('pre-notificato',), # 3 (impostato dal notifier)
+        ('notificato',),     # 4 (impostato dal notifier)
+        ('venduto',)         # 5 (da implementare)
+    ]
     categorie_iniziali = [('Abbigliamento',), ('elettronica',), ('libri/hobby',), ('casa',), ('altro',)]
     piattaforme_iniziali = [('Vinted',), ('Subito',), ('Wallapop',), ('Vestaire Collection',)]
     
@@ -55,9 +72,38 @@ def db_initialization():
 
     connection.commit()
     connection.close()
+    
+def get_or_create_user(telegram_user_id, nome_utente):
+    """
+    Controlla se un utente esiste in base al suo ID Telegram.
+    Se non esiste, lo crea.
+    Restituisce l'ID del database interno (non l'ID Telegram).
+    """
+    connessione = sqlite3.connect('annunci.db')
+    cursore = connessione.cursor()
+    
+    # 1. Prova a trovare l'utente
+    cursore.execute("SELECT id FROM utente WHERE telegram_user_id = ?", (telegram_user_id,))
+    utente = cursore.fetchone()
+    
+    if utente:
+        # Utente trovato, restituisce il suo ID interno
+        id_utente_db = utente[0]
+    else:
+        # Utente non trovato, lo crea
+        cursore.execute(
+            "INSERT INTO utente (telegram_user_id, nome_utente) VALUES (?, ?)",
+            (telegram_user_id, nome_utente)
+        )
+        connessione.commit()
+        id_utente_db = cursore.lastrowid # Ottiene l'ID appena creato
+        print(f"Nuovo utente creato con ID database: {id_utente_db}")
+        
+    connessione.close()
+    return id_utente_db
 
 
-def add_annuncement(descrizione_input, titolo_generato, descrizione_generata, prezzo_suggerito, id_categoria):
+def add_annuncement(id_utente, descrizione_input, titolo_generato, descrizione_generata, prezzo_suggerito, id_categoria):
     connection = sqlite3.connect('annunci.db')
     cursor = connection.cursor()
 
@@ -65,17 +111,19 @@ def add_annuncement(descrizione_input, titolo_generato, descrizione_generata, pr
 
     sql_inserisci_annuncio = """
     INSERT INTO annuncio (
+        id_utente,
         descrizione_input,
         titolo_generato,
         descrizione_generata,
         prezzo_suggerito,
         id_stato,
         id_categoria
-    ) VALUES (?, ?, ?, ?, ?, ?);
+    ) VALUES (?, ?, ?, ?, ?, ?, ?);
     """
 
     # Dati da inserire, in ordine
     dati_annuncio = (
+        id_utente,
         descrizione_input,
         titolo_generato,
         descrizione_generata,
@@ -97,32 +145,116 @@ def add_annuncement(descrizione_input, titolo_generato, descrizione_generata, pr
     return nuovo_id
 
 
-def aggiorna_categoria_annuncio(id_annuncio, id_categoria, id_piattaforma=None):
+def aggiorna_annuncio_con_programmazione(id_annuncio, id_categoria, data_pubblicazione):
     """
-    Aggiorna un annuncio esistente con l'ID della categoria scelta.
+    Aggiorna un annuncio esistente con la categoria scelta e la data di programmazione.
+    Imposta lo stato a 2 ('pubblicato').
     """
-    connessione = sqlite3.connect('annunci.db')
+    connessione = sqlite3.connect("annunci.db")
     cursore = connessione.cursor()
 
-    if id_piattaforma is None:
-        id_piattaforma = 1 
+    # Per ora impostiamo la piattaforma a 1 (Vinted)
+    id_piattaforma_default = 1 
+    id_stato_pubblicato = 2 # Lo stato 'pubblicato'
 
     sql_aggiorna = """
     UPDATE annuncio
-    SET id_stato = 2, 
+    SET 
+        id_stato = ?,
         id_categoria = ?,
-        id_piattaforma = ?
+        id_piattaforma = ?,
+        data_pubblicazione = ?
     WHERE id = ?;
     """
-    # Lo stato 2 corrisponde a 'pubblicato'
 
-    dati = (id_categoria, id_piattaforma, id_annuncio)
+    dati = (
+        id_stato_pubblicato, 
+        id_categoria, 
+        id_piattaforma_default, 
+        data_pubblicazione, 
+        id_annuncio
+    )
     
     cursore.execute(sql_aggiorna, dati)
     connessione.commit()
     connessione.close()
     
-    print(f"Annuncio {id_annuncio} aggiornato con categoria {id_categoria}.")
+    print(f"Annuncio {id_annuncio} aggiornato. Programmazione: {data_pubblicazione}.")
+
+
+def ottieni_annunci_attivi():
+    """
+    Recupera tutti gli annunci che sono 'programmati' (2) o 'pre-notificati' (3)
+    e la cui data di pubblicazione è futura (o molto vicina).
+    """
+    connessione = sqlite3.connect('annunci.db')
+    connessione.row_factory = sqlite3.Row 
+    cursore = connessione.cursor()
+
+    # Cerchiamo solo annunci che devono ancora essere gestiti (stato 2 o 3)
+    # e la cui data è nel futuro (con un margine di 5 min nel passato
+    # per sicurezza, se lo script si blocca)
+    sql_query = """
+    SELECT a.*, u.telegram_user_id
+    FROM annuncio a
+    JOIN utente u ON a.id_utente = u.id
+    WHERE a.id_stato IN (2, 3)
+      AND a.data_pubblicazione >= datetime('now', '-5 minutes');
+    """
+    
+    cursore.execute(sql_query)
+    annunci = cursore.fetchall()
+    connessione.close()
+    
+    return [dict(annuncio) for annuncio in annunci]
+
+def aggiorna_stato_annuncio(id_annuncio, id_nuovo_stato):
+    """Aggiorna la colonna id_stato per un annuncio specifico."""
+    connessione = sqlite3.connect('annunci.db')
+    cursore = connessione.cursor()
+
+    sql_aggiorna = "UPDATE annuncio SET id_stato = ? WHERE id = ?;"
+    
+    cursore.execute(sql_aggiorna, (id_nuovo_stato, id_annuncio))
+    connessione.commit()
+    connessione.close()
+    
+    print(f"Annuncio {id_annuncio} aggiornato allo stato {id_nuovo_stato}.")
+
+
+def ottieni_statistiche_stati(id_utente):
+    """
+    Conta quanti annunci ci sono per ogni stato,
+    restituendo il nome dello stato e il conteggio.
+    """
+    connessione = sqlite3.connect('annunci.db')
+    connessione.row_factory = sqlite3.Row # Per avere risultati come dizionari
+    cursore = connessione.cursor()
+
+    # Questa query SQL unisce le tabelle 'annuncio' e 'stati',
+    # raggruppa per nome dello stato e conta gli annunci per gruppo.
+    sql_query = """
+    SELECT 
+        s.nome AS nome_stato,
+        COUNT(a.id) AS conteggio
+    FROM 
+        annuncio a
+    JOIN 
+        stato s ON a.id_stato = s.id
+    WHERE a.id_utente = ?
+    GROUP BY 
+        s.nome
+    ORDER BY 
+        conteggio DESC;
+    """
+    
+    cursore.execute(sql_query, (id_utente,))
+    statistiche = cursore.fetchall()
+    connessione.close()
+    
+    # Ritorna una lista di dizionari, es: [{'nome_stato': 'programmato', 'conteggio': 5}, ...]
+    return [dict(riga) for riga in statistiche]
+
 
 if __name__ == '__main__':
     db_initialization()
