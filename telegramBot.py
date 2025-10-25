@@ -78,18 +78,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Rimuoviamo qualsiasi stato di conversazione precedente
     return ConversationHandler.END
 
-"""
-async def nuovo_annuncio_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not context.args:
-        await update.message.reply_text("Per favore, fornisci una descrizione dopo il comando /nuovo.")
-        return ConversationHandler.END # Termina la conversazione
-        
-    descrizione_input = " ".join(context.args)
-    
-    # Chiama la funzione che processa e chiede la categoria
-    return await processa_e_chiedi_categoria(descrizione_input, update, context, foto_bytes=None)
-"""
-
 #Funzione che analizza i dati degli annunci
 async def analisi_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     print("Ricevuto comando /analisi")
