@@ -4,11 +4,8 @@ import telegram
 import datetime
 from dateutil.parser import isoparse
 from dotenv import load_dotenv
-
-# Importiamo le nostre funzioni del database
 from database import ottieni_annunci_attivi, aggiorna_stato_annuncio
 
-# Carichiamo le variabili d'ambiente
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")

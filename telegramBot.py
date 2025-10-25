@@ -31,14 +31,15 @@ from database import (
     ottieni_piattaforme_attive,
     elimina_annuncio
 )
-from aiService import ad_text_generator
-from aiService import parse_risposta_ai
+from aiService import (
+    ad_text_generator,
+    parse_risposta_ai
+)
 
 load_dotenv()
 TOKEN   = os.getenv("TOKEN")
 
 ATTESA_FOTO, ATTESA_CATEGORIA, ATTESA_PIATTAFORMA, ATTESA_DATA = range(4)
-
 VENDI_ATTESA_SCELTA, VENDI_ATTESA_PREZZO = range(4,6)
 
 T_CREA = "🆕 Crea Annuncio"
@@ -100,39 +101,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Rimuoviamo qualsiasi stato di conversazione precedente
     return ConversationHandler.END
 
-#Funzione che analizza i dati degli annunci
-async def analisi_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    print("Ricevuto comando /analisi")
-    user = update.message.from_user
-    id_telegram = user.id
-    nome_telegram = user.first_name
-    id_utente_db = get_or_create_user(id_telegram, nome_telegram)
-    try:
-        statistiche = ottieni_statistiche_stati(id_utente_db)
 
-        if not statistiche:
-            await update.message.reply_text("Nessun annuncio ancora nel database.")
-            return
-
-        messaggio_risposta = "📊 **Statistiche Annunci** 📊\n\n"
-        messaggio_risposta += "Ecco un riepilogo dei tuoi annunci per stato:\n"
-        
-        totale_annunci = 0
-        for stato in statistiche:
-            messaggio_risposta += f"  - **{stato['nome_stato'].capitalize()}**: {stato['conteggio']} annunci\n"
-            totale_annunci += stato['conteggio']
-        
-        messaggio_risposta += f"\n**Totale Annunci:** {totale_annunci}"
-
-        await update.message.reply_text(messaggio_risposta, 
-                                        parse_mode='Markdown',
-                                        reply_markup=crea_menu_principale())
-
-    except Exception as e:
-        print(f"Errore durante /analisi: {e}")
-        await update.message.reply_text(f"Si è verificato un errore durante la generazione delle statistiche: {e}")
-
-#Funzione per la creazione di un annuncio
+#HANDLERS:
+#Crea annuncio:
 async def nuovo_annuncio_handler_testo_guida(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Perfetto! 👍\nPer creare un nuovo annuncio, **inviami una foto con una breve descrizione nella didascalia**.",
@@ -140,7 +111,6 @@ async def nuovo_annuncio_handler_testo_guida(update: Update, context: ContextTyp
     )
     return ATTESA_FOTO
 
-#Funzione che prende la foto e lo manda a gemini
 async def foto_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handler per la foto con didascalia."""
     if not update.message.caption:
@@ -160,48 +130,136 @@ async def foto_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     # Chiama la funzione che processa e chiede la categoria
     return await processa_e_chiedi_categoria(descrizione_input, update, context, foto_bytes=foto_bytes)
 
-#Funzione che torna la lista degli annunci
-async def lista_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-
-    print("Ricevuto comando /lista")
-    
-    # --- Autenticazione Utente ---
+async def processa_e_chiedi_categoria(descrizione_input: str, update: Update, context: ContextTypes.DEFAULT_TYPE, foto_bytes: bytearray = None) -> int:
+    """
+    genera l'annuncio, lo salva in bozza, chiede all'utente la categoria, entrando nello stato ATTESA_CATEGORIA.
+    """
+    await update.message.reply_text(f"✍️ Ricevuto: '{descrizione_input}'.\nSto analizzando testo e immagine con l'IA, attendi...")
+    #autentificazione utente
     user = update.message.from_user
-    id_utente_db = get_or_create_user(user.id, user.first_name)
-    try:
-        annunci = ottieni_annunci_utente(id_utente_db)
+    id_telegram = user.id
+    nome_telegram = user.first_name
+    id_utente_db = get_or_create_user(id_telegram, nome_telegram)
+    
+    
+    testo_grezzo_ai = await ad_text_generator(descrizione_input, foto_bytes)
+    titolo, descrizione, prezzo = parse_risposta_ai(testo_grezzo_ai)
+    
+    # Salviamo l'annuncio in bozza (categoria e piattaforma sono ancora vuote/default)
+    nuovo_id = add_annuncement(
+        id_utente=id_utente_db,
+        descrizione_input=descrizione_input,
+        titolo_generato=titolo,
+        descrizione_generata=descrizione,
+        prezzo_suggerito=prezzo,
+        id_categoria=None # Lo chiederemo ora
+    )
+    context.user_data['id_annuncio_corrente'] = nuovo_id
+    
+    titolo_pulito = escape_markdown(titolo, version=2)
+    descrizione_pulita = escape_markdown(descrizione, version=2)
+    prezzo_pulito = escape_markdown(prezzo, version=2)
 
-        if not annunci:
-            await update.message.reply_text("Non hai ancora nessun annuncio nel database. Inizia con /start o inviando una foto.")
-            return
+    risposta_anteprima = (
+        f"✅ Annuncio in bozza creato con ID: {nuovo_id}\n\n"
+        f"**Titolo:**\n{titolo_pulito}\n\n"
+        f"**Descrizione:**\n{descrizione_pulita}\n\n"
+        f"**Prezzo Suggerito:** {prezzo_pulito}"
+    )
+    
+    await update.message.reply_text(risposta_anteprima, parse_mode='MarkdownV2')
+    
+    # Ora facciamo la domanda con i pulsanti
+    await update.message.reply_text(
+        "Ottimo! Ora scegli una categoria per l'annuncio:",
+        reply_markup=crea_tastiera_categorie()
+    )
+    
+    # Diciamo al ConversationHandler di passare allo stato "ATTESA_CATEGORIA"
+    return ATTESA_CATEGORIA
 
-        messaggio_risposta = "📑 **I Tuoi Annunci** 📑\n\n"
-        
-        for annuncio in annunci:
-            titolo = annuncio['titolo_generato'] if annuncio['titolo_generato'] else "Senza Titolo"
-            stato = annuncio['nome_stato'].capitalize() if annuncio['nome_stato'] else "Bozza"
-            
-            # Formattiamo un bel titolo per ogni annuncio
-            messaggio_risposta += f"🆔 **ID:** `{annuncio['id']}`\n"
-            messaggio_risposta += f"   **Titolo:** {escape_markdown(titolo, version=2)}\n"
-            messaggio_risposta += f"   **Stato:** {stato}\n"
-            
-            # Aggiungiamo la data di programmazione se esiste
-            if annuncio['data_pubblicazione']:
-                data_prog = isoparse(annuncio['data_pubblicazione']).strftime('%d/%m/%y alle %H:%M')
-                messaggio_risposta += f"   **Programmato:** {data_prog}\n"
-            
-            messaggio_risposta += "‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐\n" # Separatore
+async def ricevi_categoria(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Questa funzione si attiva quando l'utente preme un pulsante di categoria.
+    """
+    query = update.callback_query
+    await query.answer() # Risponde al "click" per far sparire l'icona di caricamento
 
-        await update.message.reply_text(messaggio_risposta, 
-                                        parse_mode='MarkdownV2',
-                                        reply_markup=crea_menu_principale())
+    # Estraiamo l'ID della categoria dal pulsante (es. "cat_1" -> "1")
+    id_categoria_scelta = int(query.data.split('_')[1])
+    context.user_data['id_categoria_scelta'] = id_categoria_scelta
+    await query.edit_message_text(
+        text=f"✅ Categoria scelta! Ora dimmi quando vuoi programmare l'annuncio.",
+        reply_markup=crea_tastiera_piattaforme()
+    )
+    
+    # Diciamo al ConversationHandler di passare allo stato "ATTESA_DATA"
+    return ATTESA_PIATTAFORMA
 
-    except Exception as e:
-        print(f"Errore durante /lista: {e}")
-        await update.message.reply_text(f"Si è verificato un errore durante il recupero dei tuoi annunci: {e}")
-           
-#Funzione che segna venduto un annuncio    
+async def ricevi_piattaforma(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Riceve la piattaforma e chiede la data di programmazione.
+    """
+    query = update.callback_query
+    await query.answer() 
+
+    id_piattaforma_scelta = int(query.data.split('_')[1])
+
+    # Salviamo la piattaforma nello "zainetto"
+    context.user_data['id_piattaforma_scelta'] = id_piattaforma_scelta
+
+    # Modifichiamo il messaggio e chiediamo la data
+    await query.edit_message_text(text=f"✅ Piattaforma scelta!")
+
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text="Scrivimi una data e un'ora per la programmazione (es: 'domani alle 15:00')."
+    )
+
+    # Passiamo allo stato ATTESA_DATA
+    return ATTESA_DATA
+
+async def ricevi_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Questa funzione si attiva quando l'utente invia un testo nello stato ATTESA_DATA.
+    """
+    testo_data = update.message.text
+    
+    # Usiamo dateparser per "capire" il testo
+    data_programmata = dateparser.parse(testo_data, languages=['it'])
+
+    if not data_programmata:
+        # L'utente ha scritto qualcosa che non capiamo
+        await update.message.reply_text(
+            "Non ho capito la data. 😅 Riprova con un formato più semplice (es. 'domani alle 15:00')."
+        )
+        return ATTESA_DATA # Rimaniamo nello stesso stato
+
+    # Recuperiamo i dati dalla memoria
+    id_annuncio = context.user_data.get('id_annuncio_corrente')
+    id_categoria = context.user_data.get('id_categoria_scelta')
+    id_piattaforma = context.user_data.get('id_piattaforma_scelta')
+
+    if not id_annuncio or not id_categoria:
+        await update.message.reply_text("Si è verificato un errore, i dati dell'annuncio sono andati persi. Riprova con /start.")
+        context.user_data.clear()
+        return ConversationHandler.END
+
+    # Aggiorniamo il database con TUTTE le informazioni
+    aggiorna_annuncio_con_programmazione(id_annuncio, id_categoria, id_piattaforma, data_programmata)
+
+    await update.message.reply_text(
+        f"Perfetto! 👍 Annuncio {id_annuncio} salvato e programmato per:\n"
+        f"**{data_programmata.strftime('%d %B %Y alle %H:%M')}**",
+        parse_mode='Markdown',
+        reply_markup=crea_menu_principale()
+    )
+    
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
+#Segna venduto un annuncio:   
 async def vendi_wizard_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.message.from_user
     id_utente_db = get_or_create_user(user.id, user.first_name)
@@ -296,138 +354,83 @@ async def vendi_ricevi_prezzo(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data.clear()
     return ConversationHandler.END
 
-#Funzione che continua la creazione
-async def processa_e_chiedi_categoria(descrizione_input: str, update: Update, context: ContextTypes.DEFAULT_TYPE, foto_bytes: bytearray = None) -> int:
-    """
-    genera l'annuncio, lo salva in bozza, chiede all'utente la categoria, entrando nello stato ATTESA_CATEGORIA.
-    """
-    await update.message.reply_text(f"✍️ Ricevuto: '{descrizione_input}'.\nSto analizzando testo e immagine con l'IA, attendi...")
-    #autentificazione utente
+
+#La lista degli annunci
+async def lista_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+
+    print("Ricevuto comando /lista")
+    
+    # --- Autenticazione Utente ---
+    user = update.message.from_user
+    id_utente_db = get_or_create_user(user.id, user.first_name)
+    try:
+        annunci = ottieni_annunci_utente(id_utente_db)
+
+        if not annunci:
+            await update.message.reply_text("Non hai ancora nessun annuncio nel database. Inizia con /start o inviando una foto.")
+            return
+
+        messaggio_risposta = "📑 **I Tuoi Annunci** 📑\n\n"
+        
+        for annuncio in annunci:
+            titolo = annuncio['titolo_generato'] if annuncio['titolo_generato'] else "Senza Titolo"
+            stato = annuncio['nome_stato'].capitalize() if annuncio['nome_stato'] else "Bozza"
+            
+            # Formattiamo un bel titolo per ogni annuncio
+            messaggio_risposta += f"🆔 **ID:** `{annuncio['id']}`\n"
+            messaggio_risposta += f"   **Titolo:** {escape_markdown(titolo, version=2)}\n"
+            messaggio_risposta += f"   **Stato:** {stato}\n"
+            
+            # Aggiungiamo la data di programmazione se esiste
+            if annuncio['data_pubblicazione']:
+                data_prog = isoparse(annuncio['data_pubblicazione']).strftime('%d/%m/%y alle %H:%M')
+                messaggio_risposta += f"   **Programmato:** {data_prog}\n"
+            
+            messaggio_risposta += "‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐‐\n" # Separatore
+
+        await update.message.reply_text(messaggio_risposta, 
+                                        parse_mode='MarkdownV2',
+                                        reply_markup=crea_menu_principale())
+
+    except Exception as e:
+        print(f"Errore durante /lista: {e}")
+        await update.message.reply_text(f"Si è verificato un errore durante il recupero dei tuoi annunci: {e}")
+
+
+#Analisi:
+async def analisi_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    print("Ricevuto comando /analisi")
     user = update.message.from_user
     id_telegram = user.id
     nome_telegram = user.first_name
     id_utente_db = get_or_create_user(id_telegram, nome_telegram)
-    
-    
-    testo_grezzo_ai = await ad_text_generator(descrizione_input, foto_bytes)
-    titolo, descrizione, prezzo = parse_risposta_ai(testo_grezzo_ai)
-    
-    # Salviamo l'annuncio in bozza (categoria e piattaforma sono ancora vuote/default)
-    nuovo_id = add_annuncement(
-        id_utente=id_utente_db,
-        descrizione_input=descrizione_input,
-        titolo_generato=titolo,
-        descrizione_generata=descrizione,
-        prezzo_suggerito=prezzo,
-        id_categoria=None # Lo chiederemo ora
-    )
-    context.user_data['id_annuncio_corrente'] = nuovo_id
-    
-    titolo_pulito = escape_markdown(titolo, version=2)
-    descrizione_pulita = escape_markdown(descrizione, version=2)
-    prezzo_pulito = escape_markdown(prezzo, version=2)
+    try:
+        statistiche = ottieni_statistiche_stati(id_utente_db)
 
-    risposta_anteprima = (
-        f"✅ Annuncio in bozza creato con ID: {nuovo_id}\n\n"
-        f"**Titolo:**\n{titolo_pulito}\n\n"
-        f"**Descrizione:**\n{descrizione_pulita}\n\n"
-        f"**Prezzo Suggerito:** {prezzo_pulito}"
-    )
-    
-    await update.message.reply_text(risposta_anteprima, parse_mode='MarkdownV2')
-    
-    # Ora facciamo la domanda con i pulsanti
-    await update.message.reply_text(
-        "Ottimo! Ora scegli una categoria per l'annuncio:",
-        reply_markup=crea_tastiera_categorie()
-    )
-    
-    # Diciamo al ConversationHandler di passare allo stato "ATTESA_CATEGORIA"
-    return ATTESA_CATEGORIA
+        if not statistiche:
+            await update.message.reply_text("Nessun annuncio ancora nel database.")
+            return
 
-#Funzione che riceve la categoria e la inserisce all'annuncio
-async def ricevi_categoria(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    Questa funzione si attiva quando l'utente preme un pulsante di categoria.
-    """
-    query = update.callback_query
-    await query.answer() # Risponde al "click" per far sparire l'icona di caricamento
+        messaggio_risposta = "📊 **Statistiche Annunci** 📊\n\n"
+        messaggio_risposta += "Ecco un riepilogo dei tuoi annunci per stato:\n"
+        
+        totale_annunci = 0
+        for stato in statistiche:
+            messaggio_risposta += f"  - **{stato['nome_stato'].capitalize()}**: {stato['conteggio']} annunci\n"
+            totale_annunci += stato['conteggio']
+        
+        messaggio_risposta += f"\n**Totale Annunci:** {totale_annunci}"
 
-    # Estraiamo l'ID della categoria dal pulsante (es. "cat_1" -> "1")
-    id_categoria_scelta = int(query.data.split('_')[1])
-    context.user_data['id_categoria_scelta'] = id_categoria_scelta
-    await query.edit_message_text(
-        text=f"✅ Categoria scelta! Ora dimmi quando vuoi programmare l'annuncio.",
-        reply_markup=crea_tastiera_piattaforme()
-    )
-    
-    # Diciamo al ConversationHandler di passare allo stato "ATTESA_DATA"
-    return ATTESA_PIATTAFORMA
+        await update.message.reply_text(messaggio_risposta, 
+                                        parse_mode='Markdown',
+                                        reply_markup=crea_menu_principale())
 
-#Funzione che riceve la data e la inserisce all'annuncio
-async def ricevi_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    Questa funzione si attiva quando l'utente invia un testo nello stato ATTESA_DATA.
-    """
-    testo_data = update.message.text
-    
-    # Usiamo dateparser per "capire" il testo
-    data_programmata = dateparser.parse(testo_data, languages=['it'])
+    except Exception as e:
+        print(f"Errore durante /analisi: {e}")
+        await update.message.reply_text(f"Si è verificato un errore durante la generazione delle statistiche: {e}")
 
-    if not data_programmata:
-        # L'utente ha scritto qualcosa che non capiamo
-        await update.message.reply_text(
-            "Non ho capito la data. 😅 Riprova con un formato più semplice (es. 'domani alle 15:00')."
-        )
-        return ATTESA_DATA # Rimaniamo nello stesso stato
 
-    # Recuperiamo i dati dalla memoria
-    id_annuncio = context.user_data.get('id_annuncio_corrente')
-    id_categoria = context.user_data.get('id_categoria_scelta')
-    id_piattaforma = context.user_data.get('id_piattaforma_scelta')
-
-    if not id_annuncio or not id_categoria:
-        await update.message.reply_text("Si è verificato un errore, i dati dell'annuncio sono andati persi. Riprova con /start.")
-        context.user_data.clear()
-        return ConversationHandler.END
-
-    # Aggiorniamo il database con TUTTE le informazioni
-    aggiorna_annuncio_con_programmazione(id_annuncio, id_categoria, id_piattaforma, data_programmata)
-
-    await update.message.reply_text(
-        f"Perfetto! 👍 Annuncio {id_annuncio} salvato e programmato per:\n"
-        f"**{data_programmata.strftime('%d %B %Y alle %H:%M')}**",
-        parse_mode='Markdown',
-        reply_markup=crea_menu_principale()
-    )
-    
-    context.user_data.clear()
-    return ConversationHandler.END
-
-async def ricevi_piattaforma(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    Riceve la piattaforma e chiede la data di programmazione.
-    """
-    query = update.callback_query
-    await query.answer() 
-
-    id_piattaforma_scelta = int(query.data.split('_')[1])
-
-    # Salviamo la piattaforma nello "zainetto"
-    context.user_data['id_piattaforma_scelta'] = id_piattaforma_scelta
-
-    # Modifichiamo il messaggio e chiediamo la data
-    await query.edit_message_text(text=f"✅ Piattaforma scelta!")
-
-    await context.bot.send_message(
-        chat_id=query.message.chat_id,
-        text="Scrivimi una data e un'ora per la programmazione (es: 'domani alle 15:00')."
-    )
-
-    # Passiamo allo stato ATTESA_DATA
-    return ATTESA_DATA
-
-#Funzione che annulla l'azione che si sta facendo
+#Annulla l'azione che si sta facendo
 async def annulla(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
     Annulla la conversazione corrente, prova a eliminare la bozza
@@ -459,6 +462,7 @@ async def annulla(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
     return ConversationHandler.END
 
+
 #Funzione di aiuto
 async def aiuto_annulla_globale(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handler per il pulsante 'Aiuto / Annulla'."""
@@ -472,6 +476,7 @@ async def aiuto_annulla_globale(update: Update, context: ContextTypes.DEFAULT_TY
         reply_markup=crea_menu_principale(),
         parse_mode='Markdown'
     )
+
 
 #gestione dei messaggi senza senso
 async def gestisci_testo_sconosciuto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -490,8 +495,10 @@ async def gestisci_testo_sconosciuto_in_conversazione(update: Update, context: C
         reply_markup=update.message.reply_markup # Mantiene la tastiera (o la rimuove se non c'è)
     )
     
+
+
 # --- FUNZIONE DI AVVIO ---
-def bot_start(): # o avvia_bot()
+def bot_start():
     """Crea l'applicazione e avvia il bot con il menu principale."""
     application = Application.builder().token(TOKEN).build()
 

@@ -1,5 +1,7 @@
 import sqlite3
 
+
+#INIZIALIZZAZIONE DATABASE
 def db_initialization():
     connection = sqlite3.connect("annunci.db")
     cursor = connection.cursor()
@@ -72,7 +74,9 @@ def db_initialization():
 
     connection.commit()
     connection.close()
-    
+
+  
+#UTENTE
 def get_or_create_user(telegram_user_id, nome_utente):
     """
     Controlla se un utente esiste in base al suo ID Telegram.
@@ -103,6 +107,7 @@ def get_or_create_user(telegram_user_id, nome_utente):
     return id_utente_db
 
 
+#MODIFICHE ALL'ANNUNCIO
 def add_annuncement(id_utente, descrizione_input, titolo_generato, descrizione_generata, prezzo_suggerito, id_categoria):
     connection = sqlite3.connect('annunci.db')
     cursor = connection.cursor()
@@ -144,7 +149,6 @@ def add_annuncement(id_utente, descrizione_input, titolo_generato, descrizione_g
     print(f"Annuncio salvato con successo nel database. ID: {nuovo_id}")
     return nuovo_id
 
-
 def aggiorna_annuncio_con_programmazione(id_annuncio, id_categoria, id_piattaforma, data_pubblicazione):
     """
     Aggiorna un annuncio esistente con la categoria scelta e la data di programmazione.
@@ -179,33 +183,6 @@ def aggiorna_annuncio_con_programmazione(id_annuncio, id_categoria, id_piattafor
     
     print(f"Annuncio {id_annuncio} aggiornato. Programmazione: {data_pubblicazione}.")
 
-
-def ottieni_annunci_attivi():
-    """
-    Recupera tutti gli annunci che sono 'programmati' (2) o 'pre-notificati' (3)
-    e la cui data di pubblicazione è futura (o molto vicina).
-    """
-    connessione = sqlite3.connect('annunci.db')
-    connessione.row_factory = sqlite3.Row 
-    cursore = connessione.cursor()
-
-    # Cerchiamo solo annunci che devono ancora essere gestiti (stato 2 o 3)
-    # e la cui data è nel futuro (con un margine di 5 min nel passato
-    # per sicurezza, se lo script si blocca)
-    sql_query = """
-    SELECT a.*, u.telegram_user_id
-    FROM annuncio a
-    JOIN utente u ON a.id_utente = u.id
-    WHERE a.id_stato IN (2, 3)
-      AND a.data_pubblicazione >= datetime('now', '-5 minutes');
-    """
-    
-    cursore.execute(sql_query)
-    annunci = cursore.fetchall()
-    connessione.close()
-    
-    return [dict(annuncio) for annuncio in annunci]
-
 def aggiorna_stato_annuncio(id_annuncio, id_nuovo_stato):
     """Aggiorna la colonna id_stato per un annuncio specifico."""
     connessione = sqlite3.connect('annunci.db')
@@ -218,100 +195,6 @@ def aggiorna_stato_annuncio(id_annuncio, id_nuovo_stato):
     connessione.close()
     
     print(f"Annuncio {id_annuncio} aggiornato allo stato {id_nuovo_stato}.")
-
-
-def ottieni_statistiche_stati(id_utente):
-    """
-    Conta quanti annunci ci sono per ogni stato,
-    restituendo il nome dello stato e il conteggio.
-    """
-    connessione = sqlite3.connect('annunci.db')
-    connessione.row_factory = sqlite3.Row # Per avere risultati come dizionari
-    cursore = connessione.cursor()
-
-    # Questa query SQL unisce le tabelle 'annuncio' e 'stati',
-    # raggruppa per nome dello stato e conta gli annunci per gruppo.
-    sql_query = """
-    SELECT 
-        s.nome AS nome_stato,
-        COUNT(a.id) AS conteggio
-    FROM 
-        annuncio a
-    JOIN 
-        stato s ON a.id_stato = s.id
-    WHERE a.id_utente = ?
-    GROUP BY 
-        s.nome
-    ORDER BY 
-        conteggio DESC;
-    """
-    
-    cursore.execute(sql_query, (id_utente,))
-    statistiche = cursore.fetchall()
-    connessione.close()
-    
-    # Ritorna una lista di dizionari, es: [{'nome_stato': 'programmato', 'conteggio': 5}, ...]
-    return [dict(riga) for riga in statistiche]
-
-def ottieni_annunci_utente(id_utente):
-    """
-    Recupera tutti gli annunci per un utente specifico,
-    ordinati per data di creazione (dal più recente).
-    Include il nome dello stato.
-    """
-    connessione = sqlite3.connect('annunci.db')
-    connessione.row_factory = sqlite3.Row # Per avere risultati come dizionari
-    cursore = connessione.cursor()
-
-    # Query SQL che unisce 'annuncio' e 'stati'
-    # e filtra per uno specifico 'id_utente'
-    sql_query = """
-    SELECT 
-        a.id,
-        a.titolo_generato,
-        a.data_creazione,
-        s.nome AS nome_stato,
-        a.data_pubblicazione
-    FROM 
-        annuncio a
-    LEFT JOIN 
-        stato s ON a.id_stato = s.id
-    WHERE 
-        a.id_utente = ?
-    ORDER BY 
-        a.data_creazione DESC;
-    """
-    
-    cursore.execute(sql_query, (id_utente,))
-    annunci = cursore.fetchall()
-    connessione.close()
-    
-    return [dict(riga) for riga in annunci]
-
-
-def ottieni_annunci_non_venduti(id_utente):
-    """
-    Recupera tutti gli annunci per un utente che NON sono
-    nello stato 'venduto' (id_stato = 5).
-    """
-    connessione = sqlite3.connect('annunci.db')
-    connessione.row_factory = sqlite3.Row
-    cursore = connessione.cursor()
-
-    # Lo stato 'venduto' è 5 (nella nostra logica)
-    sql_query = """
-    SELECT id, titolo_generato
-    FROM annuncio
-    WHERE id_utente = ? AND (id_stato != 5 OR id_stato IS NULL)
-    ORDER BY data_creazione DESC
-    LIMIT 10; -- Mostriamo solo i 10 più recenti per non intasare la chat
-    """
-    
-    cursore.execute(sql_query, (id_utente,))
-    annunci = cursore.fetchall()
-    connessione.close()
-    
-    return [dict(riga) for riga in annunci]
 
 def segna_come_venduto(id_utente, id_annuncio, prezzo_vendita):
     """
@@ -389,6 +272,126 @@ def elimina_annuncio(id_utente, id_annuncio):
         print(f"Errore in elimina_annuncio: {e}")
         connessione.close()
         return False
+
+
+#SELECT
+def ottieni_annunci_attivi():
+    """
+    Recupera tutti gli annunci che sono 'programmati' (2) o 'pre-notificati' (3)
+    e la cui data di pubblicazione è futura (o molto vicina).
+    """
+    connessione = sqlite3.connect('annunci.db')
+    connessione.row_factory = sqlite3.Row 
+    cursore = connessione.cursor()
+
+    # Cerchiamo solo annunci che devono ancora essere gestiti (stato 2 o 3)
+    # e la cui data è nel futuro (con un margine di 5 min nel passato
+    # per sicurezza, se lo script si blocca)
+    sql_query = """
+    SELECT a.*, u.telegram_user_id
+    FROM annuncio a
+    JOIN utente u ON a.id_utente = u.id
+    WHERE a.id_stato IN (2, 3)
+      AND a.data_pubblicazione >= datetime('now', '-5 minutes');
+    """
+    
+    cursore.execute(sql_query)
+    annunci = cursore.fetchall()
+    connessione.close()
+    
+    return [dict(annuncio) for annuncio in annunci]
+
+def ottieni_statistiche_stati(id_utente):
+    """
+    Conta quanti annunci ci sono per ogni stato,
+    restituendo il nome dello stato e il conteggio.
+    """
+    connessione = sqlite3.connect('annunci.db')
+    connessione.row_factory = sqlite3.Row # Per avere risultati come dizionari
+    cursore = connessione.cursor()
+
+    # Questa query SQL unisce le tabelle 'annuncio' e 'stati',
+    # raggruppa per nome dello stato e conta gli annunci per gruppo.
+    sql_query = """
+    SELECT 
+        s.nome AS nome_stato,
+        COUNT(a.id) AS conteggio
+    FROM 
+        annuncio a
+    JOIN 
+        stato s ON a.id_stato = s.id
+    WHERE a.id_utente = ?
+    GROUP BY 
+        s.nome
+    ORDER BY 
+        conteggio DESC;
+    """
+    
+    cursore.execute(sql_query, (id_utente,))
+    statistiche = cursore.fetchall()
+    connessione.close()
+    
+    # Ritorna una lista di dizionari, es: [{'nome_stato': 'programmato', 'conteggio': 5}, ...]
+    return [dict(riga) for riga in statistiche]
+
+def ottieni_annunci_utente(id_utente):
+    """
+    Recupera tutti gli annunci per un utente specifico,
+    ordinati per data di creazione (dal più recente).
+    Include il nome dello stato.
+    """
+    connessione = sqlite3.connect('annunci.db')
+    connessione.row_factory = sqlite3.Row # Per avere risultati come dizionari
+    cursore = connessione.cursor()
+
+    # Query SQL che unisce 'annuncio' e 'stati'
+    # e filtra per uno specifico 'id_utente'
+    sql_query = """
+    SELECT 
+        a.id,
+        a.titolo_generato,
+        a.data_creazione,
+        s.nome AS nome_stato,
+        a.data_pubblicazione
+    FROM 
+        annuncio a
+    LEFT JOIN 
+        stato s ON a.id_stato = s.id
+    WHERE 
+        a.id_utente = ?
+    ORDER BY 
+        a.data_creazione DESC;
+    """
+    
+    cursore.execute(sql_query, (id_utente,))
+    annunci = cursore.fetchall()
+    connessione.close()
+    
+    return [dict(riga) for riga in annunci]
+
+def ottieni_annunci_non_venduti(id_utente):
+    """
+    Recupera tutti gli annunci per un utente che NON sono
+    nello stato 'venduto' (id_stato = 5).
+    """
+    connessione = sqlite3.connect('annunci.db')
+    connessione.row_factory = sqlite3.Row
+    cursore = connessione.cursor()
+
+    # Lo stato 'venduto' è 5 (nella nostra logica)
+    sql_query = """
+    SELECT id, titolo_generato
+    FROM annuncio
+    WHERE id_utente = ? AND (id_stato != 5 OR id_stato IS NULL)
+    ORDER BY data_creazione DESC
+    LIMIT 10; -- Mostriamo solo i 10 più recenti per non intasare la chat
+    """
+    
+    cursore.execute(sql_query, (id_utente,))
+    annunci = cursore.fetchall()
+    connessione.close()
+    
+    return [dict(riga) for riga in annunci]
 
 def ottieni_categorie_attive():
     """Recupera tutte le categorie dalla tabella 'stati'."""

@@ -1,7 +1,6 @@
 import google.generativeai as genai
 import os
 from dotenv import load_dotenv
-
 import io
 from PIL import Image
 
@@ -12,6 +11,7 @@ if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 else:
     print("Error in recovering the GEMINI_API_KEY in .env file")
+
 
 async def ad_text_generator(product_description, foto_bytes=None):
     """
@@ -65,7 +65,6 @@ async def ad_text_generator(product_description, foto_bytes=None):
     response = await model.generate_content_async(contenuto_prompt)
     
     return response.text
-
 
 def parse_risposta_ai(testo_grezzo):
     """
