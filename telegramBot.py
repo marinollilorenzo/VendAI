@@ -24,7 +24,10 @@ from database import (
     aggiorna_annuncio_con_programmazione, 
     ottieni_statistiche_stati,
     get_or_create_user,
-    ottieni_annunci_utente
+    ottieni_annunci_utente,
+    segna_come_venduto,
+    ottieni_annunci_non_venduti,
+    elimina_annuncio
 )
 from aiService import ad_text_generator
 from aiService import parse_risposta_ai
@@ -32,7 +35,9 @@ from aiService import parse_risposta_ai
 load_dotenv()
 TOKEN   = os.getenv("TOKEN")
 
-ATTESA_CATEGORIA, ATTESA_DATA = range(2)
+ATTESA_FOTO, ATTESA_CATEGORIA, ATTESA_DATA = range(3)
+
+VENDI_ATTESA_SCELTA, VENDI_ATTESA_PREZZO = range(2,4);
 
 T_CREA = "🆕 Crea Annuncio"
 T_LISTA = "🛍️ I Miei Annunci"
@@ -116,6 +121,7 @@ async def nuovo_annuncio_handler_testo_guida(update: Update, context: ContextTyp
         "Perfetto! 👍\nPer creare un nuovo annuncio, **inviami una foto con una breve descrizione nella didascalia**.",
         parse_mode='Markdown'
     )
+    return ATTESA_FOTO
 
 #Funzione che prende la foto e lo manda a gemini
 async def foto_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -180,9 +186,98 @@ async def lista_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
            
 #Funzione che segna venduto un annuncio    
 async def vendi_wizard_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Funzione /vendi in costruzione! Torna presto.",
-                                    reply_markup=crea_menu_principale())
-    return ConversationHandler.END # Per ora non fa nulla 
+    user = update.message.from_user
+    id_utente_db = get_or_create_user(user.id, user.first_name)
+    
+    annunci_non_venduti = ottieni_annunci_non_venduti(id_utente_db)
+    
+    if not annunci_non_venduti:
+        await update.message.reply_text(
+            "Non hai annunci attivi da segnare come venduti.",
+            reply_markup=crea_menu_principale()
+        )
+        return ConversationHandler.END
+
+    # Costruiamo i pulsanti in linea
+    tastiera_annunci = []
+    for annuncio in annunci_non_venduti:
+        # Usiamo un prefisso 'vendi_' per il callback_data
+        callback_data = f"vendi_{annuncio['id']}"
+        titolo = annuncio['titolo_generato']
+        # Tronchiamo il titolo se è troppo lungo per un pulsante
+        titolo_corto = (titolo[:40] + '...') if len(titolo) > 40 else titolo
+        
+        tastiera_annunci.append(
+            [InlineKeyboardButton(titolo_corto, callback_data=callback_data)]
+        )
+
+    await update.message.reply_text(
+        "Quale annuncio hai venduto? (Seleziona dalla lista)",
+        reply_markup=InlineKeyboardMarkup(tastiera_annunci)
+    )
+    
+    # Entriamo nel primo stato del wizard di vendita
+    return VENDI_ATTESA_SCELTA
+
+async def vendi_ricevi_scelta_annuncio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Riceve il click sul pulsante dell'annuncio.
+    Chiede A QUANTO è stato venduto.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    # Estraiamo l'ID (es. "vendi_14" -> "14")
+    id_annuncio_scelto = int(query.data.split('_')[1])
+    
+    # Salviamo l'ID nello "zainetto" per il prossimo step
+    context.user_data['id_annuncio_da_vendere'] = id_annuncio_scelto
+    
+    await query.edit_message_text(text=f"Ottimo! Annuncio {id_annuncio_scelto} selezionato.\n\nA che prezzo (in euro) l'hai venduto? Scrivi solo il numero (es. `25.50`):")
+    
+    # Passiamo al secondo stato
+    return VENDI_ATTESA_PREZZO
+
+async def vendi_ricevi_prezzo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Riceve il prezzo finale, aggiorna il DB e conclude.
+    """
+    prezzo_testo = update.message.text
+    
+    # Autentichiamo l'utente un'ultima volta per sicurezza
+    user = update.message.from_user
+    id_utente_db = get_or_create_user(user.id, user.first_name)
+    
+    try:
+        prezzo_finale = float(prezzo_testo.replace(',', '.'))
+        id_annuncio = context.user_data.get('id_annuncio_da_vendere')
+
+        if not id_annuncio:
+            raise ValueError("ID annuncio non trovato nella sessione.")
+
+        successo = segna_come_venduto(id_utente_db, id_annuncio, prezzo_finale)
+
+        if successo:
+            await update.message.reply_text(
+                f"🎉 Congratulazioni!\nAnnuncio **{id_annuncio}** segnato come VENDUTO a **{prezzo_finale}€**.",
+                parse_mode='Markdown',
+                reply_markup=crea_menu_principale()
+            )
+        else:
+            await update.message.reply_text(
+                "❌ Operazione fallita. Non ho trovato un annuncio con quell'ID che ti appartiene.",
+                reply_markup=crea_menu_principale()
+            )
+
+    except ValueError:
+        await update.message.reply_text(
+            "Non ho capito. 😅 Per favore, scrivi solo il numero (es. `25` o `14.50`)."
+        )
+        return VENDI_ATTESA_PREZZO # Rimaniamo nello stato
+    
+    # Puliamo lo "zainetto" e terminiamo
+    context.user_data.clear()
+    return ConversationHandler.END
 
 #Funzione che continua la creazione
 async def processa_e_chiedi_categoria(descrizione_input: str, update: Update, context: ContextTypes.DEFAULT_TYPE, foto_bytes: bytearray = None) -> int:
@@ -294,11 +389,33 @@ async def ricevi_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
 #Funzione che annulla l'azione che si sta facendo
 async def annulla(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Annulla la conversazione e ritorna al menu principale."""
-    await update.message.reply_text(
-        "Operazione annullata. Ritorno al menu principale.",
-        reply_markup=crea_menu_principale()
-    )
+    """
+    Annulla la conversazione corrente, prova a eliminare la bozza
+    e ritorna al menu principale.
+    """
+    messaggio_feedback = "Operazione annullata. Ritorno al menu principale."
+    
+    # Controlliamo se c'è un annuncio in corso nello "zainetto"
+    id_annuncio_corrente = context.user_data.get('id_annuncio_corrente')
+    
+    if id_annuncio_corrente:
+        print(f"Annullamento: Trovato annuncio in corso ID: {id_annuncio_corrente}")
+        # Identifichiamo l'utente per sicurezza
+        user = update.effective_user # Otteniamo l'utente (da messaggio o callback)
+        if user:
+            id_utente_db = get_or_create_user(user.id, user.first_name)
+            # Proviamo a eliminare
+            eliminato = elimina_annuncio(id_utente_db, id_annuncio_corrente)
+            if eliminato:
+                messaggio_feedback = "Operazione annullata. La bozza dell'annuncio è stata eliminata."
+            else:
+                 messaggio_feedback = "Operazione annullata. Non sono riuscito a eliminare la bozza (potrebbe essere già stata completata o cancellata)."
+        else:
+             print("Annullamento: Impossibile identificare l'utente per l'eliminazione.")
+
+    await update.callback_query.edit_message_text(text=messaggio_feedback) if update.callback_query else await update.message.reply_text(messaggio_feedback, reply_markup=crea_menu_principale())
+
+    # Puliamo lo "zainetto" in ogni caso
     context.user_data.clear()
     return ConversationHandler.END
 
@@ -324,26 +441,46 @@ async def gestisci_testo_sconosciuto(update: Update, context: ContextTypes.DEFAU
         "Usa i pulsanti del menu qui sotto per dirmi cosa fare.",
         reply_markup=crea_menu_principale()
     )    
+
+async def gestisci_testo_sconosciuto_in_conversazione(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Risponde a un pulsante del menu premuto mentre si è in uno stato di attesa."""
+    await update.message.reply_text(
+        "Stai completando un'altra operazione! 😅\n"
+        "Per favore, finisci l'inserimento o premi '❓ Aiuto / Annulla' per uscire.",
+        reply_markup=update.message.reply_markup # Mantiene la tastiera (o la rimuove se non c'è)
+    )
+    
 # --- FUNZIONE DI AVVIO ---
 def bot_start(): # o avvia_bot()
     """Crea l'applicazione e avvia il bot con il menu principale."""
     application = Application.builder().token(TOKEN).build()
 
-    # --- CONVERSAZIONE 1: CREAZIONE ANNUNCIO ---
-    conv_handler_crea = ConversationHandler(
+    main_conversation_handler = ConversationHandler(
         entry_points=[
-            # L'utente può iniziare o inviando una foto...
-            MessageHandler(filters.PHOTO, foto_handler),
-            # ...o cliccando il pulsante (che gestiamo dopo)
-            MessageHandler(filters.Text(T_CREA), nuovo_annuncio_handler_testo_guida)
+            #MessageHandler(filters.PHOTO, foto_handler),
+            MessageHandler(filters.Text(T_CREA), nuovo_annuncio_handler_testo_guida),
+            MessageHandler(filters.Text(T_VENDI), vendi_wizard_start)  
         ],
         states={
+            ATTESA_FOTO: [
+                MessageHandler(filters.PHOTO, foto_handler),
+            ],
             ATTESA_CATEGORIA: [
-                CallbackQueryHandler(ricevi_categoria) 
+                CallbackQueryHandler(ricevi_categoria, pattern="^cat_") 
             ],
             ATTESA_DATA: [
+                MessageHandler(filters.Text([T_LISTA, T_ANALISI, T_VENDI, T_CREA]), gestisci_testo_sconosciuto_in_conversazione),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, ricevi_data)
+            ],
+            VENDI_ATTESA_SCELTA: [
+                CallbackQueryHandler(vendi_ricevi_scelta_annuncio, pattern="^vendi_")
+            ],
+            VENDI_ATTESA_PREZZO: [
+                MessageHandler(filters.Text([T_LISTA, T_ANALISI, T_VENDI, T_CREA]), gestisci_testo_sconosciuto_in_conversazione),
+                MessageHandler(filters.Text(T_AIUTO), annulla),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, vendi_ricevi_prezzo)
             ]
+            
         },
         fallbacks=[
             # Il comando /annulla funziona DENTRO la conversazione
@@ -351,31 +488,19 @@ def bot_start(): # o avvia_bot()
             # Anche il pulsante 'Aiuto / Annulla' funziona
             MessageHandler(filters.Text(T_AIUTO), annulla)
         ],
+        per_user=True,
+        allow_reentry=False
+        
     )
     
-    # --- CONVERSAZIONE 2: VENDITA ANNUNCIO ---
-    # Per ora è vuota, ma la prepariamo
-    conv_handler_vendi = ConversationHandler(
-        entry_points=[MessageHandler(filters.Text(T_VENDI), vendi_wizard_start)],
-        states={
-            # ... (qui definiremo gli stati per scegliere l'annuncio e inserire il prezzo)
-        },
-        fallbacks=[
-            CommandHandler("annulla", annulla),
-            MessageHandler(filters.Text(T_AIUTO), annulla)
-        ],
-    )
-
     # Aggiungiamo i gestori di conversazione
-    application.add_handler(conv_handler_crea)
-    # application.add_handler(conv_handler_vendi) # La attiveremo quando sarà pronta
+    application.add_handler(main_conversation_handler)
 
     # --- GESTORI GLOBALI (Il Menu Principale) ---
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.Text(T_LISTA), lista_handler))
     application.add_handler(MessageHandler(filters.Text(T_ANALISI), analisi_handler))
     application.add_handler(MessageHandler(filters.Text(T_AIUTO), aiuto_annulla_globale))
-    application.add_handler(MessageHandler(filters.Text(T_VENDI), vendi_wizard_start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, gestisci_testo_sconosciuto))
 
     print("Bot avviato e in ascolto... (modalità MENU ATTIVA!)")

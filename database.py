@@ -290,5 +290,107 @@ def ottieni_annunci_utente(id_utente):
     
     return [dict(riga) for riga in annunci]
 
+
+def ottieni_annunci_non_venduti(id_utente):
+    """
+    Recupera tutti gli annunci per un utente che NON sono
+    nello stato 'venduto' (id_stato = 5).
+    """
+    connessione = sqlite3.connect('annunci.db')
+    connessione.row_factory = sqlite3.Row
+    cursore = connessione.cursor()
+
+    # Lo stato 'venduto' è 5 (nella nostra logica)
+    sql_query = """
+    SELECT id, titolo_generato
+    FROM annuncio
+    WHERE id_utente = ? AND (id_stato != 5 OR id_stato IS NULL)
+    ORDER BY data_creazione DESC
+    LIMIT 10; -- Mostriamo solo i 10 più recenti per non intasare la chat
+    """
+    
+    cursore.execute(sql_query, (id_utente,))
+    annunci = cursore.fetchall()
+    connessione.close()
+    
+    return [dict(riga) for riga in annunci]
+
+def segna_come_venduto(id_utente, id_annuncio, prezzo_vendita):
+    """
+    Aggiorna un annuncio come 'venduto'.
+    Controlla che l'annuncio appartenga all'utente prima di aggiornarlo.
+    Restituisce True se l'aggiornamento ha successo, False altrimenti.
+    """
+    connessione = sqlite3.connect('annunci.db')
+    cursore = connessione.cursor()
+
+    # Lo stato 'venduto' ha id = 5 (in base alla nostra ultima logica)
+    id_stato_venduto = 5
+
+    sql_aggiorna = """
+    UPDATE annuncio
+    SET 
+        id_stato = ?,
+        prezzo_vendita = ?,
+        data_vendita = CURRENT_TIMESTAMP
+    WHERE 
+        id = ? AND id_utente = ?; -- Controllo di sicurezza!
+    """
+    
+    try:
+        cursore.execute(sql_aggiorna, (
+            id_stato_venduto, 
+            prezzo_vendita, 
+            id_annuncio, 
+            id_utente
+        ))
+        
+        connessione.commit()
+        
+        # 'rowcount' ci dice quante righe sono state modificate.
+        # Se è 0, significa che l'annuncio non è stato trovato O non apparteneva all'utente.
+        if cursore.rowcount == 0:
+            print(f"Tentativo di vendita fallito per annuncio {id_annuncio} dall'utente {id_utente}. Annuncio non trovato o non autorizzato.")
+            connessione.close()
+            return False
+        
+        connessione.close()
+        print(f"Annuncio {id_annuncio} segnato come venduto per l'utente {id_utente} a {prezzo_vendita}€.")
+        return True
+
+    except Exception as e:
+        print(f"Errore in segna_come_venduto: {e}")
+        connessione.close()
+        return False
+
+def elimina_annuncio(id_utente, id_annuncio):
+    """
+    Elimina un annuncio specifico, controllando che appartenga all'utente.
+    Restituisce True se l'eliminazione ha successo, False altrimenti.
+    """
+    connessione = sqlite3.connect('annunci.db')
+    cursore = connessione.cursor()
+
+    sql_elimina = "DELETE FROM annuncio WHERE id = ? AND id_utente = ?;"
+    
+    try:
+        cursore.execute(sql_elimina, (id_annuncio, id_utente))
+        connessione.commit()
+        
+        # Controlliamo se è stata eliminata effettivamente una riga
+        if cursore.rowcount > 0:
+            print(f"Annuncio {id_annuncio} eliminato correttamente per utente {id_utente}.")
+            connessione.close()
+            return True
+        else:
+            print(f"Tentativo di eliminazione fallito per annuncio {id_annuncio}, utente {id_utente}. Annuncio non trovato o non autorizzato.")
+            connessione.close()
+            return False
+            
+    except Exception as e:
+        print(f"Errore in elimina_annuncio: {e}")
+        connessione.close()
+        return False
+    
 if __name__ == '__main__':
     db_initialization()
