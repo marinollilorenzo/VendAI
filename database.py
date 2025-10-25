@@ -255,6 +255,40 @@ def ottieni_statistiche_stati(id_utente):
     # Ritorna una lista di dizionari, es: [{'nome_stato': 'programmato', 'conteggio': 5}, ...]
     return [dict(riga) for riga in statistiche]
 
+def ottieni_annunci_utente(id_utente):
+    """
+    Recupera tutti gli annunci per un utente specifico,
+    ordinati per data di creazione (dal più recente).
+    Include il nome dello stato.
+    """
+    connessione = sqlite3.connect('annunci.db')
+    connessione.row_factory = sqlite3.Row # Per avere risultati come dizionari
+    cursore = connessione.cursor()
+
+    # Query SQL che unisce 'annuncio' e 'stati'
+    # e filtra per uno specifico 'id_utente'
+    sql_query = """
+    SELECT 
+        a.id,
+        a.titolo_generato,
+        a.data_creazione,
+        s.nome AS nome_stato,
+        a.data_pubblicazione
+    FROM 
+        annuncio a
+    LEFT JOIN 
+        stato s ON a.id_stato = s.id
+    WHERE 
+        a.id_utente = ?
+    ORDER BY 
+        a.data_creazione DESC;
+    """
+    
+    cursore.execute(sql_query, (id_utente,))
+    annunci = cursore.fetchall()
+    connessione.close()
+    
+    return [dict(riga) for riga in annunci]
 
 if __name__ == '__main__':
     db_initialization()

@@ -34,8 +34,8 @@ async def formatta_messaggio(annuncio, tipo_notifica="finale"):
     descrizione = annuncio['descrizione_generata']
     
     if tipo_notifica == "pre-notifica":
-        header = f"⏰ **PREAVVISO 30 MINUTI** ⏰"
-        footer = f"Preparati a pubblicare l'annuncio (ID: {annuncio['id']}) tra 30 minuti!"
+        header = f"⏰ **PREAVVISO, MANCANO MENO DI 30 MINUTI** ⏰"
+        footer = f"Preparati a pubblicare l'annuncio (ID: {annuncio['id']}) che mancano meno di 30 minuti!"
     else: # "finale"
         header = f"🔔 **È ORA DI PUBBLICARE!** 🔔"
         footer = f"Ecco l'annuncio programmato (ID: {annuncio['id']})."
