@@ -1,7 +1,9 @@
 import os
 from dotenv import load_dotenv
+import re
+import datetime
 from dateutil.parser import isoparse
-import dateparser
+from datetime import timedelta
 from telegram import(
     Update,
     InlineKeyboardButton,
@@ -38,7 +40,17 @@ from aiService import (
 
 load_dotenv()
 TOKEN   = os.getenv("TOKEN")
+# Mapping Italian month names to numbers (case-insensitive)
+mesi = {
+    "gennaio": 1, "febbraio": 2, "marzo": 3, "aprile": 4, "maggio": 5, "giugno": 6,
+    "luglio": 7, "agosto": 8, "settembre": 9, "ottobre": 10, "novembre": 11, "dicembre": 12
+}
 
+# Mapping Italian weekdays to numbers (0=Monday, 6=Sunday)
+giorni_settimana = {
+    "lunedì": 0, "lunedi": 0, "martedì": 1, "martedi": 1, "mercoledì": 2, "mercoledi": 2,
+    "giovedì": 3, "giovedi": 3, "venerdì": 4, "venerdi": 4, "sabato": 5, "domenica": 6
+}
 ATTESA_FOTO, ATTESA_CATEGORIA, ATTESA_PIATTAFORMA, ATTESA_DATA = range(4)
 VENDI_ATTESA_SCELTA, VENDI_ATTESA_PREZZO = range(4,6)
 
@@ -89,6 +101,101 @@ def crea_tastiera_piattaforme():
 
     return InlineKeyboardMarkup(pulsanti)
 
+#Util
+def parse_date_regex(text):
+    """
+    Parses Italian date/time strings using regex and Python logic.
+    Prefers future dates.
+    """
+    now = datetime.datetime.now()
+    text_lower = text.lower().strip()
+    target_date = None
+
+    # Pattern 1: "tra X minuti/ore"
+    match = re.search(r"tra\s+(\d+)\s+(minut[oi]|or[ae])", text_lower)
+    if match:
+        quantita = int(match.group(1))
+        unita = match.group(2)
+        if unita.startswith("minut"):
+            target_date = now + timedelta(minutes=quantita)
+        else: # ore
+            target_date = now + timedelta(hours=quantita)
+        return target_date
+
+    # Pattern 2: "domani alle HH[:MM]"
+    match = re.search(r"domani\s+alle\s+(\d{1,2})(?:[:\.](\d{2}))?", text_lower)
+    if match:
+        ora = int(match.group(1))
+        minuti = int(match.group(2) or 0) # Default to 0 if minutes are omitted
+        if 0 <= ora <= 23 and 0 <= minuti <= 59:
+            domani = now.date() + timedelta(days=1)
+            target_date = datetime.datetime(domani.year, domani.month, domani.day, ora, minuti)
+            return target_date
+
+    # Pattern 3: "tra X giorni alle HH[:MM]"
+    match = re.search(r"tra\s+(\d+)\s+giorni\s+alle\s+(\d{1,2})(?:[:\.](\d{2}))?", text_lower)
+    if match:
+        giorni = int(match.group(1))
+        ora = int(match.group(2))
+        minuti = int(match.group(3) or 0)
+        if 0 <= ora <= 23 and 0 <= minuti <= 59:
+            giorno_futuro = now.date() + timedelta(days=giorni)
+            target_date = datetime.datetime(giorno_futuro.year, giorno_futuro.month, giorno_futuro.day, ora, minuti)
+            return target_date
+
+    # Pattern 4: "giorno_settimana prossimo alle HH[:MM]"
+    match = re.search(r"([a-zì]+)\s+prossim[oi]\s+(?:alle\s+)?(\d{1,2})(?:[:\.](\d{2}))?", text_lower)
+    if match:
+        nome_giorno = match.group(1)
+        ora = int(match.group(2))
+        minuti = int(match.group(3) or 0)
+        if nome_giorno in giorni_settimana and 0 <= ora <= 23 and 0 <= minuti <= 59:
+            giorno_target_num = giorni_settimana[nome_giorno]
+            giorni_da_aggiungere = (giorno_target_num - now.weekday() + 7) % 7
+            if giorni_da_aggiungere == 0: # If it's today, go to next week
+                 giorni_da_aggiungere = 7
+            giorno_futuro = now.date() + timedelta(days=giorni_da_aggiungere)
+            target_date = datetime.datetime(giorno_futuro.year, giorno_futuro.month, giorno_futuro.day, ora, minuti)
+            return target_date
+
+    # Pattern 5: "alle HH[:MM]" (prefer future)
+    match = re.search(r"alle\s+(\d{1,2})(?:[:\.](\d{2}))?", text_lower)
+    if match:
+        ora = int(match.group(1))
+        minuti = int(match.group(2) or 0)
+        if 0 <= ora <= 23 and 0 <= minuti <= 59:
+            ora_target = datetime.time(ora, minuti)
+            ora_attuale = now.time()
+            if ora_target > ora_attuale:
+                # Same day, future time
+                target_date = datetime.datetime.combine(now.date(), ora_target)
+            else:
+                # Next day
+                domani = now.date() + timedelta(days=1)
+                target_date = datetime.datetime.combine(domani, ora_target)
+            return target_date
+
+    # Pattern 6: "il GG mese alle HH[:MM]" or "GG mese HH:MM" or "GG mese alle HH"
+    match = re.search(r"(?:il\s+)?(\d{1,2})\s+([a-zì]+)\s+(?:alle\s+)?(\d{1,2})(?:[:\.](\d{2}))?", text_lower)
+    if match:
+        giorno = int(match.group(1))
+        nome_mese = match.group(2)
+        ora = int(match.group(3))
+        minuti = int(match.group(4) or 0)
+        if nome_mese in mesi and 1 <= giorno <= 31 and 0 <= ora <= 23 and 0 <= minuti <= 59:
+            mese = mesi[nome_mese]
+            anno = now.year
+            # Basic logic: if month is in the past, assume next year
+            if mese < now.month or (mese == now.month and giorno < now.day):
+                anno += 1
+            try:
+                target_date = datetime.datetime(anno, mese, giorno, ora, minuti)
+                return target_date
+            except ValueError: # Invalid date like Feb 30
+                pass # Try next pattern
+
+    # Fallback/Default: if no pattern matched
+    return None
 
 #Funzione di inizio bot
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -224,14 +331,12 @@ async def ricevi_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     Questa funzione si attiva quando l'utente invia un testo nello stato ATTESA_DATA.
     """
     testo_data = update.message.text
-    
-    # Usiamo dateparser per "capire" il testo
-    data_programmata = dateparser.parse(testo_data, languages=['it'])
+    data_programmata = parse_date_regex(testo_data)
+    print(f"Testo ricevuto: '{testo_data}' -> Data capita: {data_programmata}")
 
     if not data_programmata:
-        # L'utente ha scritto qualcosa che non capiamo
         await update.message.reply_text(
-            "Non ho capito la data. 😅 Riprova con un formato più semplice (es. 'domani alle 15:00')."
+            "Non ho capito la data. 😅 Riprova (es. 'domani alle 15:00', 'tra 2 giorni alle 21')."
         )
         return ATTESA_DATA # Rimaniamo nello stesso stato
 
