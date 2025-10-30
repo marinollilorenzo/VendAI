@@ -33,10 +33,7 @@ from database import (
     ottieni_piattaforme_attive,
     elimina_annuncio
 )
-from aiService import (
-    ad_text_generator,
-    parse_risposta_ai
-)
+from aiService import ad_text_generator
 
 load_dotenv()
 TOKEN   = os.getenv("TOKEN")
@@ -249,8 +246,16 @@ async def processa_e_chiedi_categoria(descrizione_input: str, update: Update, co
     id_utente_db = get_or_create_user(id_telegram, nome_telegram)
     
     
-    testo_grezzo_ai = await ad_text_generator(descrizione_input, foto_bytes)
-    titolo, descrizione, prezzo = parse_risposta_ai(testo_grezzo_ai)
+    risultato_ai = await ad_text_generator(descrizione_input, foto_bytes)
+    # 2. Controlliamo se è un errore
+    if isinstance(risultato_ai, dict) and "Errore" in risultato_ai.get("title", ""):
+         await update.message.reply_text(f"Errore dall'IA: {risultato_ai['description']}", reply_markup=crea_menu_principale())
+         return ConversationHandler.END # Termina la conversazione
+
+    # 3. Se non è un errore, accediamo ai campi .title, .description, .price
+    titolo = risultato_ai.title
+    descrizione = risultato_ai.description
+    prezzo = risultato_ai.price
     
     # Salviamo l'annuncio in bozza (categoria e piattaforma sono ancora vuote/default)
     nuovo_id = add_annuncement(
