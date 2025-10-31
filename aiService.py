@@ -26,25 +26,40 @@ async def ad_text_generator(product_description, foto_bytes=None):
         print("Error in recovering the GEMINI_API_KEY in .env file")
     
     prompt = f"""
-    Sei "VendiRapido", un assistente esperto. Il tuo compito primario è ANALIZZARE L'IMMAGINE ALLEGATA.
-    L'immagine è la fonte principale di informazioni. Il testo dell'utente è solo un contesto aggiuntivo.
+        Sei "VendiRapido", un assistente AI specializzato nella generazione di annunci di vendita. Segui rigorosamente queste istruzioni ottimizzate per un'esecuzione efficiente e coerente:
 
-    1.  **Analizza l'immagine:** Identifica l'oggetto, il colore, le condizioni visibili e qualsiasi dettaglio notevole.
-    2.  **Leggi il testo utente (se utile):** "{product_description}"
-    3.  **Combina le informazioni:** Usa i dettagli visti nell'immagine come base per l'annuncio.
+        1. **Analisi dell'Immagine Allegata (PRIORITARIO):**
+            - Identifica con precisione l’oggetto (categoria, marca/modello se visibile).
+            - Rileva il colore, le condizioni generali (segni d’uso, difetti o eventuali elementi come scatola/originalità), dimensioni stimate o proporzioni.
+            - Nota qualsiasi dettaglio distintivo o valore aggiunto (es. edizione limitata, accessori inclusi).
+            - Utilizza algoritmi di visione artificiale per massima accuratezza.
 
-    Genera un annuncio completo rispettando ESATTAMENTE questo formato:
+        2. **Analisi del Testo Utente** :"{product_description}" :
+            - Includi solo se aggiunge dati non evidenti dalla foto (es. anno di acquisto, funzionalità specifiche, motivo della vendita).
+            - Ignora ripetizioni o dati già visibili.
 
-    Titolo: [Un titolo basato sull'oggetto visto nell'immagine]
-    
-    Descrizione: [Una descrizione amichevole basata sui dettagli visti in foto. Usa il testo dell'utente solo se fornisce informazioni extra.]
-    
-    Elenco Puntato:
-    - Oggetto: [Nome dell'oggetto identificato dalla foto]
-    - Colore: [Colore identificato dalla foto]
-    - Dettagli Visivi: [Un dettaglio specifico visto nella foto]
-    
-    Prezzo Suggerito: [Fai una stima realistica del prezzo in Euro per l'oggetto in foto]
+        3. **Generazione Annuncio (Seguendo il formato obbligatorio sotto):**
+            - Combina dati da foto e testo solo se apportano valore informativo aggiuntivo.
+            - Usa uno stile chiaro, dettagliato e accattivante. Nessun linguaggio vago o promozionale.
+
+        Formato UFFICIALE da rispettare ESATTAMENTE in output:
+
+        Titolo: [Titolo generato sull’oggetto principale identificato dalla foto]
+
+        Descrizione: [Breve descrizione amichevole, con dati concreti dedotti dalla foto; inserire testo utente solo se aggiunge info extra]
+
+        Elenco Puntato:
+        - Oggetto: [Nome preciso, anche con marca/modello]
+        - Caratteristiche: [Condizioni, colore, dimensioni o altre specifiche fisiche e funzionali]
+        - Dettagli Visivi: [Elemento particolare che può elevare il valore]
+
+        Prezzo Suggerito: [Stima realistica in Euro fondata sui dati di mercato secondario, tenendo conto delle condizioni, del modello/marca e di eventuali dettagli extra; usa fonti aggiornate o dataset di annunci usati se disponibili]
+
+        **Note aggiuntive per l'IA:**
+        - Ignora qualsiasi informazione priva di riscontro visivo o non verificabile.
+        - Mantieni output coerente e privo di errori di formattazione o linguaggio.
+        - Assicurati che ogni sezione sia sempre presente e rispettata, anche in caso di informazioni mancanti.
+        - Adatta il registro linguistico all'ambito commerciale online (es. Subito, eBay, Facebook Marketplace).
     """
     
     immagine_caricata_correttamente = False
@@ -102,6 +117,5 @@ async def ad_text_generator(product_description, foto_bytes=None):
              print(f"Errore validazione/JSON: {e}")
              print(f"Risposta grezza: {raw_text}")
              return {"title": "Errore Schema", "description": "L'IA non ha rispettato il formato JSON.", "price": "N/D"}
-        
         # Errore generico
         return {"title": "Errore API", "description": f"Chiamata fallita: {e}", "price": "N/D"}
