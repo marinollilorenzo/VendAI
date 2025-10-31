@@ -24,7 +24,7 @@ from telegram.ext import (
 from database import (
     add_annuncement, 
     aggiorna_annuncio_con_programmazione, 
-    ottieni_statistiche_stati,
+    ottieni_statistiche_avanzate,
     get_or_create_user,
     ottieni_annunci_utente,
     segna_come_venduto,
@@ -512,34 +512,45 @@ async def lista_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def analisi_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     print("Ricevuto comando /analisi")
     user = update.message.from_user
-    id_telegram = user.id
-    nome_telegram = user.first_name
-    id_utente_db = get_or_create_user(id_telegram, nome_telegram)
+    id_utente_db = get_or_create_user(user.id, user.first_name)
     try:
-        statistiche = ottieni_statistiche_stati(id_utente_db)
+        statistiche = ottieni_statistiche_avanzate(id_utente_db)
 
-        if not statistiche:
-            await update.message.reply_text("Nessun annuncio ancora nel database.")
+        if not statistiche or statistiche['totale_annunci'] == 0:
+            await update.message.reply_text("Nessun annuncio ancora nel database. Inizia a creare!")
             return
+        totale_annunci = statistiche['totale_annunci']
+        totale_vendite = statistiche['totale_vendite']
+        guadagno_totale = statistiche['guadagno_totale']
 
-        messaggio_risposta = "📊 **Statistiche Annunci** 📊\n\n"
-        messaggio_risposta += "Ecco un riepilogo dei tuoi annunci per stato:\n"
-        
-        totale_annunci = 0
-        for stato in statistiche:
-            messaggio_risposta += f"  - **{stato['nome_stato'].capitalize()}**: {stato['conteggio']} annunci\n"
-            totale_annunci += stato['conteggio']
-        
-        messaggio_risposta += f"\n**Totale Annunci:** {totale_annunci}"
+        tasso_conversione = (totale_vendite / totale_annunci) * 100 if totale_annunci > 0 else 0
+        prezzo_medio_vendita = guadagno_totale / totale_vendite if totale_vendite > 0 else 0
 
-        await update.message.reply_text(messaggio_risposta, 
-                                        parse_mode='Markdown',
-                                        reply_markup=crea_menu_principale())
+        # --- Costruzione del Messaggio di Risposta ---
+        messaggio = "📊 **La Tua Dashboard Vendite** 📊\n\n"
+        
+        messaggio += "--- **Panoramica** ---\n"
+        messaggio += f"•  Annunci Totali: **{totale_annunci}**\n"
+        messaggio += f"•  Annunci Attivi: **{statistiche['totale_programmati']}**\n"
+        messaggio += f"•  Annunci Venduti: **{totale_vendite}**\n"
+        messaggio += f"•  Tasso di Conversione: **{tasso_conversione:.1f}%**\n\n"
+
+        messaggio += "--- **Guadagni Reali** 💰 ---\n"
+        messaggio += f"•  Guadagno Totale: **{guadagno_totale:.2f} €**\n"
+        messaggio += f"•  Guadagno Ultimo Mese: **{statistiche['guadagno_mese']:.2f} €**\n"
+        messaggio += f"•  Guadagno Ultimo Anno: **{statistiche['guadagno_anno']:.2f} €**\n"
+        messaggio += f"•  Prezzo Medio Vendita: **{prezzo_medio_vendita:.2f} €**\n\n"
+        
+        messaggio += "--- **Potenziale Futuro** 🔮 ---\n"
+        messaggio += f"•  Valore Stimato Annunci Attivi: **{statistiche['stima_guadagno_futuro']:.2f} €**\n"
+        
+        # NOTA: Usiamo 'Markdown' (v1) perché è meno rigido di 'MarkdownV2' 
+        # con i numeri decimali e i simboli. È più sicuro per questo messaggio.
+        await update.message.reply_text(messaggio, parse_mode='Markdown')
 
     except Exception as e:
         print(f"Errore durante /analisi: {e}")
         await update.message.reply_text(f"Si è verificato un errore durante la generazione delle statistiche: {e}")
-
 
 #Annulla l'azione che si sta facendo
 async def annulla(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:

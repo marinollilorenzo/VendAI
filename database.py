@@ -301,38 +301,61 @@ def ottieni_annunci_attivi():
     
     return [dict(annuncio) for annuncio in annunci]
 
-def ottieni_statistiche_stati(id_utente):
+def ottieni_statistiche_avanzate(id_utente):
     """
-    Conta quanti annunci ci sono per ogni stato,
-    restituendo il nome dello stato e il conteggio.
+    Esegue una query complessa per calcolare tutte le statistiche
+    per un utente specifico. Restituisce un singolo dizionario con i risultati.
     """
     connessione = sqlite3.connect('annunci.db')
     connessione.row_factory = sqlite3.Row # Per avere risultati come dizionari
     cursore = connessione.cursor()
 
-    # Questa query SQL unisce le tabelle 'annuncio' e 'stati',
-    # raggruppa per nome dello stato e conta gli annunci per gruppo.
+    # Query SQL che calcola tutto in un colpo solo
+    # Usiamo COALESCE(SUM(...), 0) per trasformare i NULL (se non ci sono vendite) in 0
     sql_query = """
-    SELECT 
-        s.nome AS nome_stato,
-        COUNT(a.id) AS conteggio
+    SELECT
+        COUNT(a.id) AS totale_annunci,
+        
+        SUM(CASE WHEN s.nome = 'venduto' THEN 1 ELSE 0 END) AS totale_vendite,
+        
+        SUM(CASE WHEN s.nome IN ('programmato', 'pre-notificato') THEN 1 ELSE 0 END) AS totale_programmati,
+        
+        COALESCE(SUM(CASE WHEN s.nome = 'venduto' THEN a.prezzo_vendita ELSE 0 END), 0) AS guadagno_totale,
+        
+        COALESCE(SUM(CASE WHEN s.nome = 'venduto' AND a.data_vendita >= datetime('now', '-1 month') THEN a.prezzo_vendita ELSE 0 END), 0) AS guadagno_mese,
+        
+        COALESCE(SUM(CASE WHEN s.nome = 'venduto' AND a.data_vendita >= datetime('now', '-1 year') THEN a.prezzo_vendita ELSE 0 END), 0) AS guadagno_anno,
+
+        COALESCE(SUM(CASE WHEN s.nome != 'venduto' THEN a.prezzo_suggerito ELSE 0 END), 0) AS stima_guadagno_futuro
+        
     FROM 
         annuncio a
-    JOIN 
+    LEFT JOIN 
         stato s ON a.id_stato = s.id
-    WHERE a.id_utente = ?
-    GROUP BY 
-        s.nome
-    ORDER BY 
-        conteggio DESC;
+    WHERE 
+        a.id_utente = ?;
     """
     
-    cursore.execute(sql_query, (id_utente,))
-    statistiche = cursore.fetchall()
-    connessione.close()
-    
-    # Ritorna una lista di dizionari, es: [{'nome_stato': 'programmato', 'conteggio': 5}, ...]
-    return [dict(riga) for riga in statistiche]
+    try:
+        cursore.execute(sql_query, (id_utente,))
+        # fetchone() perché ci aspettiamo una sola riga di risultati
+        risultati = cursore.fetchone() 
+        connessione.close()
+        
+        if risultati:
+            return dict(risultati)
+        else:
+            # Se l'utente non esiste o non ha annunci, restituisce zero
+            return {
+                "totale_annunci": 0, "totale_vendite": 0, "totale_programmati": 0,
+                "guadagno_totale": 0, "guadagno_mese": 0, "guadagno_anno": 0,
+                "stima_guadagno_futuro": 0
+            }
+            
+    except Exception as e:
+        print(f"Errore in ottieni_statistiche_avanzate: {e}")
+        connessione.close()
+        return None
 
 def ottieni_annunci_utente(id_utente):
     """

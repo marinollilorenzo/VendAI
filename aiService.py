@@ -65,8 +65,8 @@ async def ad_text_generator(product_description, foto_bytes=None):
         - fondata sui dati di mercato dell'usato, tenendo conto delle condizioni, del modello/marca e di eventuali dettagli extra
         - usa fonti aggiornate o dataset di annunci usati se disponibili
         - Restituisci **SOLO UN SINGOLO NUMERO** (es. 25.0, 150, 22.50).
-        - Non includere "€" o testo (es. "Circa 25€").
-
+        - NON INCLUDERE "€", testo, o qualsiasi altro carattere non numerico. L'output per questo campo deve essere un numero JSON valido, non una stringa.
+        
         **Note aggiuntive per l'IA:**
         - Ignora qualsiasi informazione priva di riscontro visivo o non verificabile.
         - Mantieni output coerente e privo di errori di formattazione o linguaggio.
