@@ -26,7 +26,7 @@ async def ad_text_generator(product_description, foto_bytes=None):
         print("Error in recovering the GEMINI_API_KEY in .env file")
     
     prompt = f"""
-        Sei "VendiRapido", un assistente AI specializzato nella generazione di annunci di vendita. Segui rigorosamente queste istruzioni ottimizzate per un'esecuzione efficiente e coerente:
+        Segui rigorosamente queste istruzioni ottimizzate per un'esecuzione efficiente e coerente:
 
         1. **Analisi dell'Immagine Allegata (PRIORITARIO):**
             - Identifica con precisione l’oggetto (categoria, marca/modello se visibile).
@@ -34,26 +34,36 @@ async def ad_text_generator(product_description, foto_bytes=None):
             - Nota qualsiasi dettaglio distintivo o valore aggiunto (es. edizione limitata, accessori inclusi).
             - Utilizza algoritmi di visione artificiale per massima accuratezza.
 
-        2. **Analisi del Testo Utente** :"{product_description}" :
+        2. **Analisi del Testo Utente** :
             - Includi solo se aggiunge dati non evidenti dalla foto (es. anno di acquisto, funzionalità specifiche, motivo della vendita).
             - Ignora ripetizioni o dati già visibili.
 
         3. **Generazione Annuncio (Seguendo il formato obbligatorio sotto):**
             - Combina dati da foto e testo solo se apportano valore informativo aggiuntivo.
             - Usa uno stile chiaro, dettagliato e accattivante. Nessun linguaggio vago o promozionale.
+            **TONO:** Sii DIRETTO, INFORMATIVO e NATURALE, come un venditore privato. Registro linguistico medio.
 
-        Formato UFFICIALE da rispettare ESATTAMENTE in output:
+        Testo Utente: "{product_description}"
+        
+        Formato UFFICIALE da rispettare ESATTAMENTE in output per popolare i campi:
 
-        Titolo: [Titolo generato sull’oggetto principale identificato dalla foto]
+        1.  **title (string):**
+        - Titolo generato sull’oggetto principale identificato dalla foto ricco di parole chiave
+        - Usa uno stile chiaro e commerciale (es.Vinted).
 
-        Descrizione: [Breve descrizione amichevole, con dati concreti dedotti dalla foto; inserire testo utente solo se aggiunge info extra]
+        2.  **description (string):**
+        - Scrivi una descrizione amichevole e dettagliata.
+        - inserire testo utente solo se aggiunge info extra
+        - ALLA FINE della descrizione, INCLUDI SEMPRE un elenco puntato formattato:
+        
+        Oggetto:[Nome preciso, anche con marca/modello]
+        Caratteristiche:[Condizioni, colore, dimensioni o altre specifiche fisiche e funzionali]
+        Dettagli:[Un dettaglio visivo chiave visto in foto che può elevare il valore]
 
-        Elenco Puntato:
-        - Oggetto: [Nome preciso, anche con marca/modello]
-        - Caratteristiche: [Condizioni, colore, dimensioni o altre specifiche fisiche e funzionali]
-        - Dettagli Visivi: [Elemento particolare che può elevare il valore]
-
-        Prezzo Suggerito: [Stima realistica in Euro fondata sui dati di mercato secondario, tenendo conto delle condizioni, del modello/marca e di eventuali dettagli extra; usa fonti aggiornate o dataset di annunci usati se disponibili]
+        3.  **price (string):**
+        - Fornisci una stima di prezzo realistica in Euro
+        - fondata sui dati di mercato dell'usato, tenendo conto delle condizioni, del modello/marca e di eventuali dettagli extra
+        - usa fonti aggiornate o dataset di annunci usati se disponibili
 
         **Note aggiuntive per l'IA:**
         - Ignora qualsiasi informazione priva di riscontro visivo o non verificabile.
