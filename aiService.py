@@ -11,7 +11,7 @@ load_dotenv()
 class output(BaseModel):
     title: str
     description: str
-    price:str
+    price: float
     
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
@@ -60,10 +60,12 @@ async def ad_text_generator(product_description, foto_bytes=None):
         Caratteristiche:[Condizioni, colore, dimensioni o altre specifiche fisiche e funzionali]
         Dettagli:[Un dettaglio visivo chiave visto in foto che può elevare il valore]
 
-        3.  **price (string):**
+        3.  **price (float):**
         - Fornisci una stima di prezzo realistica in Euro
         - fondata sui dati di mercato dell'usato, tenendo conto delle condizioni, del modello/marca e di eventuali dettagli extra
         - usa fonti aggiornate o dataset di annunci usati se disponibili
+        - Restituisci **SOLO UN SINGOLO NUMERO** (es. 25.0, 150, 22.50).
+        - Non includere "€" o testo (es. "Circa 25€").
 
         **Note aggiuntive per l'IA:**
         - Ignora qualsiasi informazione priva di riscontro visivo o non verificabile.

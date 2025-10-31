@@ -270,7 +270,8 @@ async def processa_e_chiedi_categoria(descrizione_input: str, update: Update, co
     
     titolo_pulito = escape_markdown(titolo, version=2)
     descrizione_pulita = escape_markdown(descrizione, version=2)
-    prezzo_pulito = escape_markdown(prezzo, version=2)
+    prezzo_stringa = f"{prezzo}€" 
+    prezzo_pulito = escape_markdown(prezzo_stringa, version=2)
 
     risposta_anteprima = (
         f"✅ Annuncio in bozza creato con ID: {nuovo_id}\n\n"

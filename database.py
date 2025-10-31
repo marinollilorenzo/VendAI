@@ -44,7 +44,7 @@ def db_initialization():
         descrizione_input TEXT NOT NULL,
         titolo_generato TEXT,
         descrizione_generata TEXT,
-        prezzo_suggerito TEXT,
+        prezzo_suggerito REAL,
         id_stato INTEGER,
         id_piattaforma INTEGER,
         data_creazione TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
