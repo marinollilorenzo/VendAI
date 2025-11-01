@@ -196,13 +196,25 @@ def parse_date_regex(text):
 
 #Funzione di inizio bot
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Invia il messaggio di benvenuto e mostra il menu principale."""
-    await update.message.reply_text(
-        "Ciao! Sono il tuo assistente per le vendite.\n"
-        "Usa i pulsanti qui sotto per iniziare 👇",
-        reply_markup=crea_menu_principale() # <-- MOSTRA IL MENU
+    user = update.message.from_user
+    id_utente_db = get_or_create_user(user.id, user.first_name)
+    
+    messaggio_benvenuto = (
+        f"Ciao {user.first_name}, benvenuto nel tuo assistente per le vendite online!\n\n"
+        "Sono il tuo assistente personale per creare e gestire annunci di vendita online.\n\n"
+        "**Cosa posso fare per te:**\n"
+        "1.  Genero titoli e descrizioni **usando l'IA** (analizzando anche le tue foto).\n"
+        "2.  **Programmo** i tuoi annunci all'ora che preferisci.\n"
+        "3.  Ti **notifico** 30 minuti prima e all'ora X.\n"
+        "4.  Tengo traccia di tutti i tuoi annunci e delle tue **statistiche di vendita**.\n\n"
+        "Usa i pulsanti del menu qui sotto per iniziare! 👇"
     )
-    # Rimuoviamo qualsiasi stato di conversazione precedente
+    
+    await update.message.reply_text(
+        messaggio_benvenuto,
+        reply_markup=crea_menu_principale(),
+        parse_mode='Markdown'
+    )
     return ConversationHandler.END
 
 
@@ -210,7 +222,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 #Crea annuncio:
 async def nuovo_annuncio_handler_testo_guida(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "Perfetto! 👍\nPer creare un nuovo annuncio, **inviami una foto con una breve descrizione nella didascalia**.",
+        "Perfetto! 👍\nPer creare un nuovo annuncio, **inviami una foto con una breve descrizione nella didascalia**.\n\nL'IA analizzerà l'immagine per darti suggerimenti migliori!",
         parse_mode='Markdown'
     )
     return ATTESA_FOTO
@@ -238,7 +250,7 @@ async def processa_e_chiedi_categoria(descrizione_input: str, update: Update, co
     """
     genera l'annuncio, lo salva in bozza, chiede all'utente la categoria, entrando nello stato ATTESA_CATEGORIA.
     """
-    await update.message.reply_text(f"✍️ Ricevuto: '{descrizione_input}'.\nSto analizzando testo e immagine con l'IA, attendi...")
+    await update.message.reply_text(f"✍️ Ricevuto! Sto analizzando la foto e la tua descrizione con l'IA... Questo potrebbe richiedere alcuni secondi. Attendi...")
     #autentificazione utente
     user = update.message.from_user
     id_telegram = user.id
@@ -274,7 +286,7 @@ async def processa_e_chiedi_categoria(descrizione_input: str, update: Update, co
     prezzo_pulito = escape_markdown(prezzo_stringa, version=2)
 
     risposta_anteprima = (
-        f"✅ Annuncio in bozza creato con ID: {nuovo_id}\n\n"
+        f"✅ **Annuncio in bozza creato!**\n\n"
         f"**Titolo:**\n{titolo_pulito}\n\n"
         f"**Descrizione:**\n{descrizione_pulita}\n\n"
         f"**Prezzo Suggerito:** {prezzo_pulito}"
@@ -302,7 +314,7 @@ async def ricevi_categoria(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     id_categoria_scelta = int(query.data.split('_')[1])
     context.user_data['id_categoria_scelta'] = id_categoria_scelta
     await query.edit_message_text(
-        text=f"✅ Categoria scelta! Ora dimmi quando vuoi programmare l'annuncio.",
+        text=f"✅ Categoria scelta! Ora scegli su quale piattaforma vuoi pubblicare:",
         reply_markup=crea_tastiera_piattaforme()
     )
     
@@ -338,8 +350,7 @@ async def ricevi_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     """
     testo_data = update.message.text
     data_programmata = parse_date_regex(testo_data)
-    print(f"Testo ricevuto: '{testo_data}' -> Data capita: {data_programmata}")
-
+    
     if not data_programmata:
         await update.message.reply_text(
             "Non ho capito la data. 😅 Riprova (es. 'domani alle 15:00', 'tra 2 giorni alle 21')."
@@ -361,7 +372,7 @@ async def ricevi_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     await update.message.reply_text(
         f"Perfetto! 👍 Annuncio {id_annuncio} salvato e programmato per:\n"
-        f"**{data_programmata.strftime('%d %B %Y alle %H:%M')}**",
+        f"**{data_programmata.strftime('%d %B %Y alle %H:%M')}** \n\nTi invierò una notifica 30 minuti prima e all'ora esatta.",
         parse_mode='Markdown',
         reply_markup=crea_menu_principale()
     )
@@ -383,22 +394,25 @@ async def vendi_wizard_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
             reply_markup=crea_menu_principale()
         )
         return ConversationHandler.END
-
+    conteggio = len(annunci_non_venduti)
+    messaggio_intro = f"Hai {conteggio} annunci attivi.\nQuale hai venduto?(Selezionalo dalla lista)"
     # Costruiamo i pulsanti in linea
     tastiera_annunci = []
     for annuncio in annunci_non_venduti:
         # Usiamo un prefisso 'vendi_' per il callback_data
         callback_data = f"vendi_{annuncio['id']}"
         titolo = annuncio['titolo_generato']
+        id_formattato = f"#{annuncio['id']:04d}"
+        testo_pulsante = f"🏷️ {id_formattato} - {titolo}"
         # Tronchiamo il titolo se è troppo lungo per un pulsante
-        titolo_corto = (titolo[:40] + '...') if len(titolo) > 40 else titolo
+        testo_pulsante_piccolo = (testo_pulsante[:40] + '...') if len(testo_pulsante) > 40 else testo_pulsante
         
         tastiera_annunci.append(
-            [InlineKeyboardButton(titolo_corto, callback_data=callback_data)]
+            [InlineKeyboardButton(testo_pulsante_piccolo, callback_data=callback_data)]
         )
 
     await update.message.reply_text(
-        "Quale annuncio hai venduto? (Seleziona dalla lista)",
+        messaggio_intro,
         reply_markup=InlineKeyboardMarkup(tastiera_annunci)
     )
     
@@ -444,8 +458,9 @@ async def vendi_ricevi_prezzo(update: Update, context: ContextTypes.DEFAULT_TYPE
         successo = segna_come_venduto(id_utente_db, id_annuncio, prezzo_finale)
 
         if successo:
+            id_formattato = f"#{id_annuncio:04d}"
             await update.message.reply_text(
-                f"🎉 Congratulazioni!\nAnnuncio **{id_annuncio}** segnato come VENDUTO a **{prezzo_finale}€**.",
+                f"🎉 Congratulazioni!\nAnnuncio **{id_formattato}** segnato come VENDUTO a **{prezzo_finale}€**.",
                 parse_mode='Markdown',
                 reply_markup=crea_menu_principale()
             )
@@ -480,15 +495,16 @@ async def lista_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         if not annunci:
             await update.message.reply_text("Non hai ancora nessun annuncio nel database. Inizia con /start o inviando una foto.")
             return
-
-        messaggio_risposta = "📑 **I Tuoi Annunci** 📑\n\n"
+        conteggio = len(annunci)
+        messaggio_risposta = f"📑 **I Tuoi {conteggio} Annunci** 📑\n\n"
         
         for annuncio in annunci:
             titolo = annuncio['titolo_generato'] if annuncio['titolo_generato'] else "Senza Titolo"
             stato = annuncio['nome_stato'].capitalize() if annuncio['nome_stato'] else "Bozza"
             
             # Formattiamo un bel titolo per ogni annuncio
-            messaggio_risposta += f"🆔 **ID:** `{annuncio['id']}`\n"
+            id_formattato = f"#{annuncio['id']:04d}" 
+            messaggio_risposta += f"🏷️ **Rif:** `{id_formattato}`\n"
             messaggio_risposta += f"   **Titolo:** {escape_markdown(titolo, version=2)}\n"
             messaggio_risposta += f"   **Stato:** {stato}\n"
             
