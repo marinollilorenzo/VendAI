@@ -31,7 +31,7 @@ from database import (
     ottieni_annunci_non_venduti,
     ottieni_categorie_attive,
     ottieni_piattaforme_attive,
-    elimina_annuncio
+    disattiva_annuncio
 )
 from aiService import ad_text_generator
 
@@ -267,8 +267,8 @@ async def processa_e_chiedi_categoria(descrizione_input: str, update: Update, co
     # 3. Se non è un errore, accediamo ai campi .title, .description, .price
     titolo = risultato_ai.title
     descrizione = risultato_ai.description
-    prezzo = risultato_ai.price
-    
+    # Il prezzo è un float, lo formattiamo e puliamo solo il simbolo "€"
+    prezzo = risultato_ai.price # Aggiungiamo uno spazio per sicurezza
     # Salviamo l'annuncio in bozza (categoria e piattaforma sono ancora vuote/default)
     nuovo_id = add_annuncement(
         id_utente=id_utente_db,
@@ -286,7 +286,7 @@ async def processa_e_chiedi_categoria(descrizione_input: str, update: Update, co
     prezzo_pulito = escape_markdown(prezzo_stringa, version=2)
 
     risposta_anteprima = (
-        f"✅ **Annuncio in bozza creato!**\n\n"
+        f"✅ **Annuncio in bozza creato\\!**\n\n"
         f"**Titolo:**\n{titolo_pulito}\n\n"
         f"**Descrizione:**\n{descrizione_pulita}\n\n"
         f"**Prezzo Suggerito:** {prezzo_pulito}"
@@ -586,7 +586,7 @@ async def annulla(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if user:
             id_utente_db = get_or_create_user(user.id, user.first_name)
             # Proviamo a eliminare
-            eliminato = elimina_annuncio(id_utente_db, id_annuncio_corrente)
+            eliminato = disattiva_annuncio(id_utente_db, id_annuncio_corrente)
             if eliminato:
                 messaggio_feedback = "Operazione annullata. La bozza dell'annuncio è stata eliminata."
             else:

@@ -54,11 +54,11 @@ async def ad_text_generator(product_description, foto_bytes=None):
         2.  **description (string):**
         - Scrivi una descrizione amichevole e dettagliata.
         - inserire testo utente solo se aggiunge info extra
-        - ALLA FINE della descrizione, INCLUDI SEMPRE un elenco puntato formattato:
+        - ALLA FINE della descrizione, INCLUDI SEMPRE un elenco puntato formattato usando i caratteri '\n' (a capo) in questo modo:
         
-        Oggetto:[Nome preciso, anche con marca/modello]
-        Caratteristiche:[Condizioni, colore, dimensioni o altre specifiche fisiche e funzionali]
-        Dettagli:[Un dettaglio visivo chiave visto in foto che può elevare il valore]
+        \n\nOggetto: [Nome preciso, anche con marca/modello]
+        \nCaratteristiche: [Condizioni, colore, dimensioni o altre specifiche fisiche e funzionali]
+        \nDettagli: [Un dettaglio visivo chiave visto in foto che può elevare il valore]
 
         3.  **price (float):**
         - Fornisci una stima di prezzo realistica in Euro

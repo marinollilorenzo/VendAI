@@ -52,6 +52,7 @@ def db_initialization():
         prezzo_vendita REAL,
         data_vendita TIMESTAMP,
         id_categoria INTEGER,
+        is_cancellato INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (id_stato) REFERENCES stato (id),
         FOREIGN KEY (id_categoria) REFERENCES categoria (id),
         FOREIGN KEY (id_piattaforma) REFERENCES piattaforma (id)
@@ -244,32 +245,36 @@ def segna_come_venduto(id_utente, id_annuncio, prezzo_vendita):
         connessione.close()
         return False
 
-def elimina_annuncio(id_utente, id_annuncio):
+def disattiva_annuncio(id_utente, id_annuncio):
     """
-    Elimina un annuncio specifico, controllando che appartenga all'utente.
-    Restituisce True se l'eliminazione ha successo, False altrimenti.
+    Esegue un 'soft delete' impostando is_cancellato = 1.
+    Controlla che l'annuncio appartenga all'utente.
     """
     connessione = sqlite3.connect('annunci.db')
     cursore = connessione.cursor()
 
-    sql_elimina = "DELETE FROM annuncio WHERE id = ? AND id_utente = ?;"
-    
+    sql_disattiva = """
+    UPDATE annuncio
+    SET 
+        is_cancellato = 1
+    WHERE 
+        id = ? AND id_utente = ?;
+    """
     try:
-        cursore.execute(sql_elimina, (id_annuncio, id_utente))
+        cursore.execute(sql_disattiva, (id_annuncio, id_utente))
         connessione.commit()
         
-        # Controlliamo se è stata eliminata effettivamente una riga
-        if cursore.rowcount > 0:
-            print(f"Annuncio {id_annuncio} eliminato correttamente per utente {id_utente}.")
-            connessione.close()
-            return True
-        else:
-            print(f"Tentativo di eliminazione fallito per annuncio {id_annuncio}, utente {id_utente}. Annuncio non trovato o non autorizzato.")
+        if cursore.rowcount == 0:
+            print(f"Tentativo di disattivazione fallito per annuncio {id_annuncio}, utente {id_utente}.")
             connessione.close()
             return False
-            
+        
+        connessione.close()
+        print(f"Annuncio {id_annuncio} disattivato (soft delete).")
+        return True
+
     except Exception as e:
-        print(f"Errore in elimina_annuncio: {e}")
+        print(f"Errore in disattiva_annuncio: {e}")
         connessione.close()
         return False
 
@@ -292,7 +297,8 @@ def ottieni_annunci_attivi():
     FROM annuncio a
     JOIN utente u ON a.id_utente = u.id
     WHERE a.id_stato IN (2, 3)
-      AND a.data_pubblicazione >= datetime('now', '-5 minutes');
+      AND a.data_pubblicazione >= datetime('now', '-5 minutes')
+      AND a.is_cancellato = 0;
     """
     
     cursore.execute(sql_query)
@@ -333,7 +339,8 @@ def ottieni_statistiche_avanzate(id_utente):
     LEFT JOIN 
         stato s ON a.id_stato = s.id
     WHERE 
-        a.id_utente = ?;
+        a.id_utente = ?
+        AND a.is_cancellato = 0;
     """
     
     try:
@@ -382,6 +389,7 @@ def ottieni_annunci_utente(id_utente):
         stato s ON a.id_stato = s.id
     WHERE 
         a.id_utente = ?
+        AND a.is_cancellato = 0
     ORDER BY 
         a.data_creazione DESC;
     """
@@ -405,7 +413,9 @@ def ottieni_annunci_non_venduti(id_utente):
     sql_query = """
     SELECT id, titolo_generato
     FROM annuncio
-    WHERE id_utente = ? AND (id_stato != 5 OR id_stato IS NULL)
+    WHERE id_utente = ?
+     AND (id_stato != 5 OR id_stato IS NULL)
+     AND is_cancellato = 0
     ORDER BY data_creazione DESC
     LIMIT 10; -- Mostriamo solo i 10 più recenti per non intasare la chat
     """
