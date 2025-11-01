@@ -48,8 +48,19 @@ giorni_settimana = {
     "lunedì": 0, "lunedi": 0, "martedì": 1, "martedi": 1, "mercoledì": 2, "mercoledi": 2,
     "giovedì": 3, "giovedi": 3, "venerdì": 4, "venerdi": 4, "sabato": 5, "domenica": 6
 }
-ATTESA_FOTO, ATTESA_CATEGORIA, ATTESA_PIATTAFORMA, ATTESA_DATA = range(4)
-VENDI_ATTESA_SCELTA, VENDI_ATTESA_PREZZO = range(4,6)
+
+(
+    CREA_ATTESA_FOTO,
+    CREA_ATTESA_CONFERMA_ANTEPRIMA,  # Step 1: Mostra l'anteprima e aspetta [Sì] o [Modifica]
+    CREA_MENU_MODIFICA,             # Step 2 (Opzionale): Mostra [Titolo] [Descrizione] [Prezzo]
+    CREA_ATTESA_NUOVO_TITOLO,       # Step 3 (Opzionale): Aspetta il nuovo titolo
+    CREA_ATTESA_NUOVA_DESCRIZIONE,  # Step 3 (Opzionale): Aspetta la nuova descrizione
+    CREA_ATTESA_NUOVO_PREZZO,       # Step 3 (Opzionale): Aspetta il nuovo prezzo
+    CREA_ATTESA_CATEGORIA,          # Step 4: Chiede la Categoria
+    CREA_ATTESA_PIATTAFORMA,        # Step 5: Chiede la Piattaforma
+    CREA_ATTESA_DATA                # Step 6: Chiede la Data
+) = range(9)
+VENDI_ATTESA_SCELTA, VENDI_ATTESA_PREZZO = range(9, 11)
 
 T_CREA = "🆕 Crea Annuncio"
 T_LISTA = "🛍️ I Miei Annunci"
@@ -98,6 +109,26 @@ def crea_tastiera_piattaforme():
 
     return InlineKeyboardMarkup(pulsanti)
 
+def crea_tastiera_conferma_anteprima() -> InlineKeyboardMarkup:
+    """Crea i pulsanti [Sì], [Modifica], [Annulla]"""
+    pulsanti = [
+        [InlineKeyboardButton("✅ Sì, prosegui", callback_data="crea_conferma_si")],
+        [InlineKeyboardButton("✏️ Modifica Testo", callback_data="crea_conferma_modifica")],
+        [InlineKeyboardButton("❌ Annulla Creazione", callback_data="crea_conferma_annulla")]
+    ]
+    return InlineKeyboardMarkup(pulsanti)
+
+def crea_tastiera_menu_modifica() -> InlineKeyboardMarkup:
+    """Crea i pulsanti [Titolo], [Descrizione], [Prezzo], [Fatto]"""
+    pulsanti = [
+        [
+            InlineKeyboardButton("Titolo", callback_data="crea_modifica_titolo"),
+            InlineKeyboardButton("Descrizione", callback_data="crea_modifica_desc"),
+            InlineKeyboardButton("Prezzo", callback_data="crea_modifica_prezzo")
+        ],
+        [InlineKeyboardButton("↩️ Ho Fatto, torna all'anteprima", callback_data="crea_modifica_fatto")]
+    ]
+    return InlineKeyboardMarkup(pulsanti)
 #Util
 def parse_date_regex(text):
     """
@@ -222,10 +253,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 #Crea annuncio:
 async def nuovo_annuncio_handler_testo_guida(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "Perfetto! 👍\nPer creare un nuovo annuncio, **inviami una foto con una breve descrizione nella didascalia**.\n\nL'IA analizzerà l'immagine per darti suggerimenti migliori!",
+        "Perfetto! 👍\nPer creare un nuovo annuncio, **inviami una foto con una breve descrizione nella didascalia**.\n\nL'IA analizzerà l'immagine per darti suggerimenti migliori!"
+        "\n\n(Puoi annullare in qualsiasi momento premendo '❓ Aiuto / Annulla')",
         parse_mode='Markdown'
     )
-    return ATTESA_FOTO
+    return CREA_ATTESA_FOTO
 
 async def foto_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handler per la foto con didascalia."""
@@ -235,7 +267,7 @@ async def foto_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             "una descrizione nella **didascalia**.",
             parse_mode='Markdown'
         )
-        return ConversationHandler.END # Termina la conversazione
+        return  CREA_ATTESA_FOTO
     
     descrizione_input = update.message.caption
     
@@ -244,19 +276,19 @@ async def foto_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     foto_bytes = await file_foto.download_as_bytearray()
     
     # Chiama la funzione che processa e chiede la categoria
-    return await processa_e_chiedi_categoria(descrizione_input, update, context, foto_bytes=foto_bytes)
+    return await processa_e_mostra_anteprima(descrizione_input, update, context, foto_bytes=foto_bytes)
 
-async def processa_e_chiedi_categoria(descrizione_input: str, update: Update, context: ContextTypes.DEFAULT_TYPE, foto_bytes: bytearray = None) -> int:
+async def processa_e_mostra_anteprima(descrizione_input: str, update: Update, context: ContextTypes.DEFAULT_TYPE, foto_bytes: bytearray = None) -> int:
     """
-    genera l'annuncio, lo salva in bozza, chiede all'utente la categoria, entrando nello stato ATTESA_CATEGORIA.
+    genera l'annuncio, lo salva in bozza, chiede all'utente la categoria, entrando nello stato CREA_ATTESA_CATEGORIA.
     """
-    await update.message.reply_text(f"✍️ Ricevuto! Sto analizzando la foto e la tua descrizione con l'IA... Questo potrebbe richiedere alcuni secondi. Attendi...")
     #autentificazione utente
     user = update.message.from_user
     id_telegram = user.id
     nome_telegram = user.first_name
     id_utente_db = get_or_create_user(id_telegram, nome_telegram)
-    
+    context.user_data['id_utente_db'] = id_utente_db
+    await update.message.reply_text(f"✍️ Ricevuto! Sto analizzando la foto e la tua descrizione con l'IA... Questo potrebbe richiedere alcuni secondi. Attendi...")
     
     risultato_ai = await ad_text_generator(descrizione_input, foto_bytes)
     # 2. Controlliamo se è un errore
@@ -264,44 +296,237 @@ async def processa_e_chiedi_categoria(descrizione_input: str, update: Update, co
          await update.message.reply_text(f"Errore dall'IA: {risultato_ai['description']}", reply_markup=crea_menu_principale())
          return ConversationHandler.END # Termina la conversazione
 
-    # 3. Se non è un errore, accediamo ai campi .title, .description, .price
-    titolo = risultato_ai.title
-    descrizione = risultato_ai.description
-    # Il prezzo è un float, lo formattiamo e puliamo solo il simbolo "€"
-    prezzo = risultato_ai.price # Aggiungiamo uno spazio per sicurezza
-    # Salviamo l'annuncio in bozza (categoria e piattaforma sono ancora vuote/default)
-    nuovo_id = add_annuncement(
-        id_utente=id_utente_db,
-        descrizione_input=descrizione_input,
-        titolo_generato=titolo,
-        descrizione_generata=descrizione,
-        prezzo_suggerito=prezzo,
-        id_categoria=None # Lo chiederemo ora
-    )
-    context.user_data['id_annuncio_corrente'] = nuovo_id
-    
-    titolo_pulito = escape_markdown(titolo, version=2)
-    descrizione_pulita = escape_markdown(descrizione, version=2)
-    prezzo_stringa = f"{prezzo}€" 
-    prezzo_pulito = escape_markdown(prezzo_stringa, version=2)
 
+    context.user_data['bozza_annuncio'] = {
+        'descrizione_input': descrizione_input,
+        'titolo': risultato_ai.title,
+        'descrizione': risultato_ai.description,
+        'prezzo': risultato_ai.price,
+        'categoria': None # Verrà aggiunto dopo
+    }
+    titolo_pulito = escape_markdown(risultato_ai.title, version=2)
+    descrizione_pulita = escape_markdown(risultato_ai.description, version=2)
+    prezzo_stringa = f"{risultato_ai.price} €"
+    prezzo_pulito = escape_markdown(prezzo_stringa, version=2)
+    
     risposta_anteprima = (
-        f"✅ **Annuncio in bozza creato\\!**\n\n"
+        f"✨ **Ecco la tua anteprima\\!** ✨\n\n"
         f"**Titolo:**\n{titolo_pulito}\n\n"
         f"**Descrizione:**\n{descrizione_pulita}\n\n"
         f"**Prezzo Suggerito:** {prezzo_pulito}"
     )
     
     await update.message.reply_text(risposta_anteprima, parse_mode='MarkdownV2')
-    
-    # Ora facciamo la domanda con i pulsanti
+    # 5. Chiediamo la conferma
     await update.message.reply_text(
-        "Ottimo! Ora scegli una categoria per l'annuncio:",
+        "Il testo generato va bene o vuoi modificare qualcosa?",
+        reply_markup=crea_tastiera_conferma_anteprima()
+    )
+    
+    # 6. Passiamo al nuovo stato d'attesa
+    return CREA_ATTESA_CONFERMA_ANTEPRIMA
+
+async def crea_prosegui_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    L'utente ha premuto [✅ Sì, prosegui].
+    Ora salviamo l'annuncio nel DB e chiediamo la categoria.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    # Recuperiamo i dati dallo "zainetto"
+    bozza = context.user_data.get('bozza_annuncio')
+    id_utente_db = context.user_data.get('id_utente_db')
+
+    if not bozza or not id_utente_db:
+        await query.edit_message_text("Si è verificato un errore, i dati della bozza sono andati persi. Riprova.", reply_markup=crea_menu_principale())
+        context.user_data.clear()
+        return ConversationHandler.END
+
+    # È qui che la bozza diventa un annuncio vero nel DB
+    nuovo_id = add_annuncement(
+        id_utente=id_utente_db,
+        descrizione_input=bozza['descrizione_input'],
+        titolo_generato=bozza['titolo'],
+        descrizione_generata=bozza['descrizione'],
+        prezzo_suggerito=bozza['prezzo'],
+        categoria=None # Lo impostiamo al prossimo step
+    )
+    
+    # Aggiorniamo lo "zainetto":
+    # Rimuoviamo la bozza e salviamo l'ID reale
+    context.user_data.pop('bozza_annuncio')
+    context.user_data['id_annuncio_corrente'] = nuovo_id
+
+    # Ora chiediamo la categoria
+    await query.edit_message_text(
+        text="✅ Testo confermato e salvato! Ora scegli una categoria:",
         reply_markup=crea_tastiera_categorie()
     )
     
-    # Diciamo al ConversationHandler di passare allo stato "ATTESA_CATEGORIA"
-    return ATTESA_CATEGORIA
+    # Passiamo allo stato successivo (che già esiste!)
+    return CREA_ATTESA_CATEGORIA
+
+
+async def crea_menu_modifica_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    L'utente ha premuto [✏️ Modifica Testo].
+    Mostriamo il menu di modifica [Titolo] [Descrizione] [Prezzo].
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    await query.edit_message_text(
+        text="Cosa vuoi modificare?",
+        reply_markup=crea_tastiera_menu_modifica()
+    )
+    
+    # Passiamo allo stato "Menu Modifica"
+    return CREA_MENU_MODIFICA
+
+async def _mostra_menu_modifica(update: Update, context: ContextTypes.DEFAULT_TYPE, messaggio_intro: str) -> int:
+    """Helper per mostrare il menu di modifica."""
+    # Controlla se l'update è un click (query) o un messaggio di testo
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text(
+            text=messaggio_intro,
+            reply_markup=crea_tastiera_menu_modifica()
+        )
+    else: # L'update è un messaggio di testo (es. l'utente ha inviato un nuovo titolo)
+        await update.message.reply_text(
+            text=messaggio_intro,
+            reply_markup=crea_tastiera_menu_modifica()
+        )
+    
+    return CREA_MENU_MODIFICA
+
+
+async def crea_richiedi_nuovo_titolo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Chiede all'utente il nuovo titolo, usando 'switch_inline_query_current_chat'."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Recupera il titolo attuale dallo "zainetto"
+    titolo_attuale = context.user_data.get('bozza_annuncio', {}).get('titolo', '')
+
+    tastiera_prefill = InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            text="Clicca qui per modificare il titolo", 
+            switch_inline_query_current_chat=titolo_attuale
+        )]])
+    
+    await query.edit_message_text(
+        text="Inviami il nuovo titolo.\n(Clicca il pulsante sotto per pre-compilare la casella di testo 👇)",
+        reply_markup=tastiera_prefill
+    )
+    return CREA_ATTESA_NUOVO_TITOLO
+
+async def crea_richiedi_nuova_descrizione(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Chiede all'utente la nuova descrizione, usando 'switch_inline_query_current_chat'."""
+    query = update.callback_query
+    await query.answer()
+    
+    desc_attuale = context.user_data.get('bozza_annuncio', {}).get('descrizione', '')
+
+    tastiera_prefill = InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            text="Clicca qui per modificare la descrizione", 
+            switch_inline_query_current_chat=desc_attuale
+        )]])
+    
+    await query.edit_message_text(
+        text="Inviami la nuova descrizione.\n(Clicca il pulsante sotto per pre-compilare 👇)",
+        reply_markup=tastiera_prefill
+    )
+    return CREA_ATTESA_NUOVA_DESCRIZIONE
+
+async def crea_richiedi_nuovo_prezzo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Chiede all'utente il nuovo prezzo, usando 'switch_inline_query_current_chat'."""
+    query = update.callback_query
+    await query.answer()
+    
+    prezzo_attuale = context.user_data.get('bozza_annuncio', {}).get('prezzo', 0.0)
+
+    tastiera_prefill = InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            text="Clicca qui per modificare il prezzo", 
+            switch_inline_query_current_chat=str(prezzo_attuale) # Convertiamo il float in stringa
+        )]])
+    
+    await query.edit_message_text(
+        text="Inviami il nuovo prezzo (solo il numero, es. 25.50).\n(Clicca il pulsante sotto per pre-compilare 👇)",
+        reply_markup=tastiera_prefill
+    )
+    return CREA_ATTESA_NUOVO_PREZZO
+
+async def crea_ricevi_nuovo_titolo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Riceve il nuovo titolo, lo salva nello 'zainetto' e torna al menu modifica."""
+    nuovo_titolo = update.message.text
+    context.user_data['bozza_annuncio']['titolo'] = nuovo_titolo
+    
+    # Torniamo al menu di modifica
+    return await _mostra_menu_modifica(update, context, "✅ Titolo aggiornato! Cosa vuoi modificare ora?")
+
+async def crea_ricevi_nuova_descrizione(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Riceve la nuova descrizione, la salva e torna al menu modifica."""
+    nuova_descrizione = update.message.text
+    context.user_data['bozza_annuncio']['descrizione'] = nuova_descrizione
+    
+    return await _mostra_menu_modifica(update, context, "✅ Descrizione aggiornata! Cosa vuoi modificare ora?")
+
+async def crea_ricevi_nuovo_prezzo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Riceve il nuovo prezzo, lo valida, lo salva e torna al menu modifica."""
+    try:
+        nuovo_prezzo = float(update.message.text.replace(',', '.'))
+        context.user_data['bozza_annuncio']['prezzo'] = nuovo_prezzo
+        
+        return await _mostra_menu_modifica(update, context, f"✅ Prezzo aggiornato a {nuovo_prezzo}€! Cosa vuoi modificare ora?")
+    
+    except ValueError:
+        # Se l'utente non scrive un numero
+        await update.message.reply_text(
+            "Errore 😅 Quello non è un numero valido. Riprova (es. 25 o 14.50)."
+        )
+        return CREA_ATTESA_NUOVO_PREZZO # Rimaniamo nello stato di attesa prezzo
+
+async def crea_modifica_fatto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    L'utente ha finito di modificare. 
+    Mostra di nuovo l'anteprima aggiornata e i pulsanti di conferma.
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    bozza = context.user_data.get('bozza_annuncio')
+    
+    if not bozza:
+        await query.edit_message_text("Si è verificato un errore, i dati della bozza sono andati persi. Riprova.", reply_markup=crea_menu_principale())
+        context.user_data.clear()
+        return ConversationHandler.END
+
+    # Ricostruiamo l'anteprima con i dati modificati
+    titolo_pulito = escape_markdown(bozza['titolo'], version=2)
+    descrizione_pulita = escape_markdown(bozza['descrizione'], version=2)
+    prezzo_stringa = f"{bozza['prezzo']} €"
+    prezzo_pulito = escape_markdown(prezzo_stringa, version=2)
+
+    risposta_anteprima = (
+        f"✨ **Ecco la tua anteprima aggiornata\\!** ✨\n\n"
+        f"**Titolo:**\n{titolo_pulito}\n\n"
+        f"**Descrizione:**\n{descrizione_pulita}\n\n"
+        f"**Prezzo Suggerito:** {prezzo_pulito}\n\n"
+        "Il testo va bene ora?"
+    )
+    
+    await query.edit_message_text(
+        text=risposta_anteprima,
+        reply_markup=crea_tastiera_conferma_anteprima(),
+        parse_mode='MarkdownV2'
+    )
+    
+    # Torniamo allo stato di conferma
+    return CREA_ATTESA_CONFERMA_ANTEPRIMA
 
 async def ricevi_categoria(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
@@ -318,8 +543,8 @@ async def ricevi_categoria(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         reply_markup=crea_tastiera_piattaforme()
     )
     
-    # Diciamo al ConversationHandler di passare allo stato "ATTESA_DATA"
-    return ATTESA_PIATTAFORMA
+    # Diciamo al ConversationHandler di passare allo stato "CREA_ATTESA_DATA"
+    return CREA_ATTESA_PIATTAFORMA
 
 async def ricevi_piattaforma(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
@@ -341,12 +566,12 @@ async def ricevi_piattaforma(update: Update, context: ContextTypes.DEFAULT_TYPE)
         text="Scrivimi una data e un'ora per la programmazione (es: 'domani alle 15:00')."
     )
 
-    # Passiamo allo stato ATTESA_DATA
-    return ATTESA_DATA
+    # Passiamo allo stato CREA_ATTESA_DATA
+    return CREA_ATTESA_DATA
 
 async def ricevi_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
-    Questa funzione si attiva quando l'utente invia un testo nello stato ATTESA_DATA.
+    Questa funzione si attiva quando l'utente invia un testo nello stato CREA_ATTESA_DATA.
     """
     testo_data = update.message.text
     data_programmata = parse_date_regex(testo_data)
@@ -355,7 +580,7 @@ async def ricevi_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         await update.message.reply_text(
             "Non ho capito la data. 😅 Riprova (es. 'domani alle 15:00', 'tra 2 giorni alle 21')."
         )
-        return ATTESA_DATA # Rimaniamo nello stesso stato
+        return CREA_ATTESA_DATA # Rimaniamo nello stesso stato
 
     # Recuperiamo i dati dalla memoria
     id_annuncio = context.user_data.get('id_annuncio_corrente')
@@ -379,6 +604,7 @@ async def ricevi_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     
     context.user_data.clear()
     return ConversationHandler.END
+
 
 
 #Segna venduto un annuncio:   
@@ -576,30 +802,36 @@ async def annulla(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
     messaggio_feedback = "Operazione annullata. Ritorno al menu principale."
     
-    # Controlliamo se c'è un annuncio in corso nello "zainetto"
-    id_annuncio_corrente = context.user_data.get('id_annuncio_corrente')
+    # Controlliamo se la bozza è in memoria (context) per pulirla
+    if 'bozza_annuncio' in context.user_data:
+        context.user_data.pop('bozza_annuncio')
+        messaggio_feedback = "Operazione annullata. La bozza è stata eliminata."
     
-    if id_annuncio_corrente:
-        print(f"Annullamento: Trovato annuncio in corso ID: {id_annuncio_corrente}")
-        # Identifichiamo l'utente per sicurezza
-        user = update.effective_user # Otteniamo l'utente (da messaggio o callback)
-        if user:
-            id_utente_db = get_or_create_user(user.id, user.first_name)
-            # Proviamo a eliminare
-            eliminato = disattiva_annuncio(id_utente_db, id_annuncio_corrente)
-            if eliminato:
-                messaggio_feedback = "Operazione annullata. La bozza dell'annuncio è stata eliminata."
-            else:
-                 messaggio_feedback = "Operazione annullata. Non sono riuscito a eliminare la bozza (potrebbe essere già stata completata o cancellata)."
-        else:
-             print("Annullamento: Impossibile identificare l'utente per l'eliminazione.")
+    # Controlliamo se c'è un annuncio già salvato (per i flussi futuri)
+    if 'id_annuncio_corrente' in context.user_data:
+        context.user_data.pop('id_annuncio_corrente')
 
-    await update.callback_query.edit_message_text(text=messaggio_feedback) if update.callback_query else await update.message.reply_text(messaggio_feedback, reply_markup=crea_menu_principale())
-
-    # Puliamo lo "zainetto" in ogni caso
+    # Controlliamo se l'update proviene da un click su pulsante (CallbackQuery)
+    if update.callback_query:
+        await update.callback_query.answer() # Risponde al click
+        # Modifica il messaggio (togliendo i pulsanti)
+        await update.callback_query.edit_message_text(text=messaggio_feedback)
+        # Invia un nuovo messaggio per mostrare il menu principale
+        await context.bot.send_message(
+            chat_id=update.callback_query.message.chat_id,
+            text="Sei nel menu principale.",
+            reply_markup=crea_menu_principale()
+        )
+    else:
+        # L'update proviene da un messaggio di testo (es. /annulla)
+        await update.message.reply_text(
+            messaggio_feedback,
+            reply_markup=crea_menu_principale()
+        )
+    
+    # Puliamo l'intero "zainetto" per sicurezza
     context.user_data.clear()
     return ConversationHandler.END
-
 
 #Funzione di aiuto
 async def aiuto_annulla_globale(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -647,19 +879,41 @@ def bot_start():
             MessageHandler(filters.Text(T_VENDI), vendi_wizard_start)  
         ],
         states={
-            ATTESA_FOTO: [
+            # --- FLUSSO DI CREAZIONE ---
+            CREA_ATTESA_FOTO: [
                 MessageHandler(filters.PHOTO, foto_handler),
             ],
-            ATTESA_CATEGORIA: [
+            CREA_ATTESA_CONFERMA_ANTEPRIMA: [
+                CallbackQueryHandler(crea_prosegui_handler, pattern="^crea_conferma_si$"),
+                CallbackQueryHandler(crea_menu_modifica_handler, pattern="^crea_conferma_modifica$"),
+                CallbackQueryHandler(annulla, pattern="^crea_conferma_annulla$")
+            ],
+            CREA_MENU_MODIFICA: [
+                CallbackQueryHandler(crea_richiedi_nuovo_titolo, pattern="^crea_modifica_titolo$"),
+                CallbackQueryHandler(crea_richiedi_nuova_descrizione, pattern="^crea_modifica_desc$"),
+                CallbackQueryHandler(crea_richiedi_nuovo_prezzo, pattern="^crea_modifica_prezzo$"),
+                CallbackQueryHandler(crea_modifica_fatto, pattern="^crea_modifica_fatto$")            
+            ],
+            CREA_ATTESA_NUOVO_TITOLO: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, crea_ricevi_nuovo_titolo)
+            ],
+            CREA_ATTESA_NUOVA_DESCRIZIONE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, crea_ricevi_nuova_descrizione)
+            ],
+            CREA_ATTESA_NUOVO_PREZZO: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, crea_ricevi_nuovo_prezzo)
+            ],
+            CREA_ATTESA_CATEGORIA: [
                 CallbackQueryHandler(ricevi_categoria, pattern="^cat_") 
             ],
-            ATTESA_PIATTAFORMA: [
+            CREA_ATTESA_PIATTAFORMA: [
                 CallbackQueryHandler(ricevi_piattaforma, pattern="^piat_")
             ],
-            ATTESA_DATA: [
+            CREA_ATTESA_DATA: [
                 MessageHandler(filters.Text([T_LISTA, T_ANALISI, T_VENDI, T_CREA]), gestisci_testo_sconosciuto_in_conversazione),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, ricevi_data)
             ],
+            # --- FLUSSO DI VENDITA ---
             VENDI_ATTESA_SCELTA: [
                 CallbackQueryHandler(vendi_ricevi_scelta_annuncio, pattern="^vendi_")
             ],
