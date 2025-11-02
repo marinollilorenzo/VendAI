@@ -60,21 +60,26 @@ giorni_settimana = {
     CREA_ATTESA_PIATTAFORMA,        # Step 5: Chiede la Piattaforma
     CREA_ATTESA_DATA                # Step 6: Chiede la Data
 ) = range(9)
+# ---STATI CONVERSAZIONE VENDI ---
 VENDI_ATTESA_SCELTA, VENDI_ATTESA_PREZZO = range(9, 11)
+# ---STATI CONVERSAZIONE ELIMINA ---
+ELIMINA_ATTESA_SCELTA, ELIMINA_ATTESA_CONFERMA = range(11, 13)
 
 T_CREA = "🆕 Crea Annuncio"
 T_LISTA = "🛍️ I Miei Annunci"
 T_VENDI = "✅ Segna come Venduto"
 T_ANALISI = "📈 Statistiche"
 T_AIUTO = "❓ Aiuto / Annulla"
+T_ELIMINA = "🗑️ Elimina Annuncio"
 
 #Funzione che crea i pulsanti del menu principale
 def crea_menu_principale() -> ReplyKeyboardMarkup:
     """Crea la tastiera del menu principale."""
     tastiera = [
         [T_CREA],  # Una riga per il pulsante principale
-        [T_LISTA, T_VENDI], # Due pulsanti sulla stessa riga
-        [T_ANALISI, T_AIUTO] # Altri due
+        [T_LISTA],
+        [T_VENDI, T_ELIMINA],
+        [T_ANALISI, T_AIUTO]
     ]
     
     return ReplyKeyboardMarkup(
@@ -129,6 +134,18 @@ def crea_tastiera_menu_modifica() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("↩️ Ho Fatto, torna all'anteprima", callback_data="crea_modifica_fatto")]
     ]
     return InlineKeyboardMarkup(pulsanti)
+
+def crea_tastiera_conferma_elimina(id_annuncio) -> InlineKeyboardMarkup:
+    """Crea i pulsanti [Sì, Elimina] e [No, Annulla]"""
+    # Passiamo l'ID nel callback_data per sapere cosa eliminare
+    pulsanti = [
+        [
+            InlineKeyboardButton("✅ Sì, Elimina", callback_data=f"elimina_conferma_si_{id_annuncio}"),
+            InlineKeyboardButton("❌ No, Annulla", callback_data="elimina_conferma_no")
+        ]
+    ]
+    return InlineKeyboardMarkup(pulsanti)
+
 #Util
 def parse_date_regex(text):
     """
@@ -617,7 +634,6 @@ async def ricevi_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     return ConversationHandler.END
 
 
-
 #Segna venduto un annuncio:   
 async def vendi_wizard_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.message.from_user
@@ -714,6 +730,100 @@ async def vendi_ricevi_prezzo(update: Update, context: ContextTypes.DEFAULT_TYPE
         return VENDI_ATTESA_PREZZO # Rimaniamo nello stato
     
     # Puliamo lo "zainetto" e terminiamo
+    context.user_data.clear()
+    return ConversationHandler.END
+
+# ---ELIMINA UN ANNUNCIO ---
+async def elimina_wizard_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Inizia il wizard /elimina.
+    Chiede all'utente QUALE annuncio vuole eliminare.
+    """
+    user = update.message.from_user
+    id_utente_db = get_or_create_user(user.id, user.first_name)
+    
+    # Riutilizziamo la funzione che abbiamo scritto per /lista!
+    annunci_attivi = ottieni_annunci_utente(id_utente_db)
+    
+    if not annunci_attivi:
+        await update.message.reply_text(
+            "Non hai annunci attivi da eliminare.",
+            reply_markup=crea_menu_principale()
+        )
+        return ConversationHandler.END
+
+    tastiera_annunci = []
+    for annuncio in annunci_attivi:
+        # Usiamo un prefisso 'elimina_' per il callback
+        callback_data = f"elimina_{annuncio['id']}"
+        id_formattato = f"#{annuncio['id']:04d}"
+        titolo = annuncio['titolo_generato']
+        
+        testo_pulsante = f"🏷️ {id_formattato} - {titolo}"
+        testo_pulsante_corto = (testo_pulsante[:40] + '...') if len(testo_pulsante) > 40 else testo_pulsante
+        
+        tastiera_annunci.append(
+            [InlineKeyboardButton(testo_pulsante_corto, callback_data=callback_data)]
+        )
+
+    await update.message.reply_text(
+        f"Hai {len(annunci_attivi)} annunci attivi.\nQuale vuoi eliminare?",
+        reply_markup=InlineKeyboardMarkup(tastiera_annunci)
+    )
+    
+    return ELIMINA_ATTESA_SCELTA
+
+async def elimina_ricevi_scelta(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    L'utente ha scelto un annuncio. Chiediamo la conferma finale.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    id_annuncio_scelto = int(query.data.split('_')[1])
+    
+    # --- MODIFICA CHIAVE ---
+    # Invia il messaggio E salva l'oggetto "messaggio" in una variabile
+    messaggio_inviato = await query.edit_message_text(
+        text=f"Sei assolutamente sicuro di voler eliminare l'annuncio `#{id_annuncio_scelto:04d}`?\n\nL'azione non può essere annullata.",
+        reply_markup=crea_tastiera_conferma_elimina(id_annuncio_scelto),
+        parse_mode='Markdown'
+    )
+    
+    # Salviamo l'ID di questo messaggio nello "zainetto"
+    context.user_data['messaggio_con_pulsanti_id'] = messaggio_inviato.message_id
+    # --- FINE MODIFICA ---
+    
+    return ELIMINA_ATTESA_CONFERMA
+
+async def elimina_esegui_conferma(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    L'utente ha premuto [Sì, Elimina].
+    Eseguiamo il 'soft delete' e terminiamo.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    id_annuncio_da_eliminare = int(query.data.split('_')[-1]) # Estrae l'ID
+    
+    # Autentichiamo l'utente
+    user = query.from_user
+    id_utente_db = get_or_create_user(user.id, user.first_name)
+    
+    # Riutilizziamo la funzione di 'soft delete' che abbiamo già scritto!
+    successo = disattiva_annuncio(id_utente_db, id_annuncio_da_eliminare)
+
+    if successo:
+        await query.edit_message_text(text=f"🗑️ Annuncio `#{id_annuncio_da_eliminare:04d}` eliminato con successo.")
+    else:
+        await query.edit_message_text(text="❌ Errore: Annuncio non trovato o non ti appartiene.")
+    
+    # Mandiamo un messaggio separato per ri-mostrare il menu principale
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text="Ritorno al menu principale.",
+        reply_markup=crea_menu_principale()
+    )
     context.user_data.clear()
     return ConversationHandler.END
 
@@ -822,6 +932,18 @@ async def annulla(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if 'id_annuncio_corrente' in context.user_data:
         context.user_data.pop('id_annuncio_corrente')
 
+    id_messaggio_zombie = context.user_data.get('messaggio_con_pulsanti_id')        
+    if id_messaggio_zombie:
+        try:
+            # Modifica il vecchio messaggio (lo zombie) per togliere i pulsanti
+            await context.bot.edit_message_text(
+                text="Operazione annullata dall'utente.",
+                chat_id=update.effective_chat.id,
+                message_id=id_messaggio_zombie
+            )
+        except Exception as e:
+            # Non fa nulla se il messaggio è troppo vecchio o già eliminato
+            print(f"Info: Impossibile editare il messaggio zombie: {e}")
     # Controlliamo se l'update proviene da un click su pulsante (CallbackQuery)
     if update.callback_query:
         await update.callback_query.answer() # Risponde al click
@@ -875,7 +997,7 @@ async def gestisci_testo_sconosciuto_in_conversazione(update: Update, context: C
         "Per favore, finisci l'inserimento o premi '❓ Aiuto / Annulla' per uscire.",
         reply_markup=update.message.reply_markup # Mantiene la tastiera (o la rimuove se non c'è)
     )
-    
+
 
 
 # --- FUNZIONE DI AVVIO ---
@@ -887,7 +1009,8 @@ def bot_start():
         entry_points=[
             #MessageHandler(filters.PHOTO, foto_handler),
             MessageHandler(filters.Text(T_CREA), nuovo_annuncio_handler_testo_guida),
-            MessageHandler(filters.Text(T_VENDI), vendi_wizard_start)  
+            MessageHandler(filters.Text(T_VENDI), vendi_wizard_start),
+            MessageHandler(filters.Text(T_ELIMINA), elimina_wizard_start)  
         ],
         states={
             # --- FLUSSO DI CREAZIONE ---
@@ -937,8 +1060,16 @@ def bot_start():
                 MessageHandler(filters.Text([T_LISTA, T_ANALISI, T_VENDI, T_CREA]), gestisci_testo_sconosciuto_in_conversazione),
                 MessageHandler(filters.Text(T_AIUTO), annulla),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, vendi_ricevi_prezzo)
-            ]
-            
+            ],
+            # --- FLUSSO DI ELIMINAZIONE DI UN ANNUNCIO ---
+            ELIMINA_ATTESA_SCELTA: [
+                CallbackQueryHandler(elimina_ricevi_scelta, pattern="^elimina_")
+            ],
+            ELIMINA_ATTESA_CONFERMA: [
+                CallbackQueryHandler(elimina_esegui_conferma, pattern="^elimina_conferma_si_"),
+                CallbackQueryHandler(annulla, pattern="^elimina_conferma_no$"),
+                MessageHandler(filters.Text(T_AIUTO), annulla),
+            ]  
         },
         fallbacks=[
             # Il comando /annulla funziona DENTRO la conversazione
