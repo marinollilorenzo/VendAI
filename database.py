@@ -76,7 +76,6 @@ def db_initialization():
     connection.commit()
     connection.close()
 
-  
 #UTENTE
 def get_or_create_user(telegram_user_id, nome_utente):
     """
@@ -106,7 +105,6 @@ def get_or_create_user(telegram_user_id, nome_utente):
         
     connessione.close()
     return id_utente_db
-
 
 #MODIFICHE ALL'ANNUNCIO
 def add_annuncement(id_utente, descrizione_input, titolo_generato, descrizione_generata, prezzo_suggerito, id_categoria):
@@ -278,7 +276,41 @@ def disattiva_annuncio(id_utente, id_annuncio):
         connessione.close()
         return False
 
+def aggiorna_campo_annuncio(id_utente, id_annuncio, campo, valore):
+    """
+    Aggiorna un singolo campo di un annuncio, controllando l'autorizzazione.
+    ATTENZIONE: Questa funzione è sicura solo se 'campo' è
+    controllato dal nostro codice e non dall'input dell'utente.
+    """
+    connessione = sqlite3.connect('annunci.db')
+    cursore = connessione.cursor()
 
+    # Usiamo un f-string per il nome della colonna (sicuro, perché lo decidiamo noi)
+    # e un '?' per il valore (per prevenire SQL injection)
+    sql_aggiorna = f"""
+    UPDATE annuncio
+    SET {campo} = ?
+    WHERE id = ? AND id_utente = ?;
+    """
+    
+    try:
+        cursore.execute(sql_aggiorna, (valore, id_annuncio, id_utente))
+        connessione.commit()
+        
+        if cursore.rowcount == 0:
+            print(f"Aggiornamento campo fallito per annuncio {id_annuncio}, utente {id_utente}.")
+            connessione.close()
+            return False
+        
+        connessione.close()
+        print(f"Annuncio {id_annuncio}, campo '{campo}' aggiornato.")
+        return True
+
+    except Exception as e:
+        print(f"Errore in aggiorna_campo_annuncio: {e}")
+        connessione.close()
+        return False
+    
 #SELECT
 def ottieni_annunci_attivi():
     """
@@ -450,6 +482,34 @@ def ottieni_piattaforme_attive():
     piattaforme = cursore.fetchall()
     connessione.close()
     return [dict(p) for p in piattaforme]
+
+def ottieni_dettagli_annuncio(id_utente, id_annuncio):
+    """
+    Recupera tutti i dettagli di un annuncio specifico,
+    controllando che appartenga all'utente.
+    """
+    connessione = sqlite3.connect('annunci.db')
+    connessione.row_factory = sqlite3.Row
+    cursore = connessione.cursor()
+
+    sql_query = """
+    SELECT * FROM annuncio
+    WHERE id = ? AND id_utente = ? AND is_cancellato = 0;
+    """
+    
+    try:
+        cursore.execute(sql_query, (id_annuncio, id_utente))
+        annuncio = cursore.fetchone() # Prendiamo solo una riga
+        connessione.close()
+        
+        return dict(annuncio) if annuncio else None
+            
+    except Exception as e:
+        print(f"Errore in ottieni_dettagli_annuncio: {e}")
+        connessione.close()
+        return None
+
+
 
 if __name__ == '__main__':
     db_initialization()
