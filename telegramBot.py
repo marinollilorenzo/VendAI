@@ -31,7 +31,9 @@ from database import (
     ottieni_annunci_non_venduti,
     ottieni_categorie_attive,
     ottieni_piattaforme_attive,
-    disattiva_annuncio
+    disattiva_annuncio,
+    ottieni_dettagli_annuncio,
+    aggiorna_campo_annuncio
 )
 from aiService import ad_text_generator
 
@@ -64,6 +66,13 @@ giorni_settimana = {
 VENDI_ATTESA_SCELTA, VENDI_ATTESA_PREZZO = range(9, 11)
 # ---STATI CONVERSAZIONE ELIMINA ---
 ELIMINA_ATTESA_SCELTA, ELIMINA_ATTESA_CONFERMA = range(11, 13)
+(
+    MODIFICA_ATTESA_SCELTA_ANNUNCIO,
+    MODIFICA_MENU_CAMPI,
+    MODIFICA_ATTESA_NUOVO_TITOLO,
+    MODIFICA_ATTESA_NUOVA_DESCRIZIONE,
+    MODIFICA_ATTESA_NUOVO_PREZZO
+) = range(13, 18)
 
 T_CREA = "🆕 Crea Annuncio"
 T_LISTA = "🛍️ I Miei Annunci"
@@ -71,13 +80,14 @@ T_VENDI = "✅ Segna come Venduto"
 T_ANALISI = "📈 Statistiche"
 T_AIUTO = "❓ Aiuto / Annulla"
 T_ELIMINA = "🗑️ Elimina Annuncio"
+T_MODIFICA = "✏️ Modifica Annuncio"
 
-#Funzione che crea i pulsanti del menu principale
+# --- TASTIERE ---
 def crea_menu_principale() -> ReplyKeyboardMarkup:
     """Crea la tastiera del menu principale."""
     tastiera = [
         [T_CREA],  # Una riga per il pulsante principale
-        [T_LISTA],
+        [T_LISTA, T_MODIFICA],
         [T_VENDI, T_ELIMINA],
         [T_ANALISI, T_AIUTO]
     ]
@@ -88,7 +98,6 @@ def crea_menu_principale() -> ReplyKeyboardMarkup:
         one_time_keyboard=False # Rende la tastiera persistente
     )
 
-#Funzione che crea i tasti per la categoria
 def crea_tastiera_categorie():
     """Crea una tastiera con le categorie prese dal DB."""
     pulsanti = []
@@ -101,7 +110,6 @@ def crea_tastiera_categorie():
 
     return InlineKeyboardMarkup(pulsanti)
 
-#Funzione che crea i tasti per la piattaforma
 def crea_tastiera_piattaforme():
     """Crea una tastiera con le piattaforme prese dal DB."""
     pulsanti = []
@@ -146,103 +154,7 @@ def crea_tastiera_conferma_elimina(id_annuncio) -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(pulsanti)
 
-#Util
-def parse_date_regex(text):
-    """
-    Parses Italian date/time strings using regex and Python logic.
-    Prefers future dates.
-    """
-    now = datetime.datetime.now()
-    text_lower = text.lower().strip()
-    target_date = None
-
-    # Pattern 1: "tra X minuti/ore"
-    match = re.search(r"tra\s+(\d+)\s+(minut[oi]|or[ae])", text_lower)
-    if match:
-        quantita = int(match.group(1))
-        unita = match.group(2)
-        if unita.startswith("minut"):
-            target_date = now + timedelta(minutes=quantita)
-        else: # ore
-            target_date = now + timedelta(hours=quantita)
-        return target_date
-
-    # Pattern 2: "domani alle HH[:MM]"
-    match = re.search(r"domani\s+alle\s+(\d{1,2})(?:[:\.](\d{2}))?", text_lower)
-    if match:
-        ora = int(match.group(1))
-        minuti = int(match.group(2) or 0) # Default to 0 if minutes are omitted
-        if 0 <= ora <= 23 and 0 <= minuti <= 59:
-            domani = now.date() + timedelta(days=1)
-            target_date = datetime.datetime(domani.year, domani.month, domani.day, ora, minuti)
-            return target_date
-
-    # Pattern 3: "tra X giorni alle HH[:MM]"
-    match = re.search(r"tra\s+(\d+)\s+giorni\s+alle\s+(\d{1,2})(?:[:\.](\d{2}))?", text_lower)
-    if match:
-        giorni = int(match.group(1))
-        ora = int(match.group(2))
-        minuti = int(match.group(3) or 0)
-        if 0 <= ora <= 23 and 0 <= minuti <= 59:
-            giorno_futuro = now.date() + timedelta(days=giorni)
-            target_date = datetime.datetime(giorno_futuro.year, giorno_futuro.month, giorno_futuro.day, ora, minuti)
-            return target_date
-
-    # Pattern 4: "giorno_settimana prossimo alle HH[:MM]"
-    match = re.search(r"([a-zì]+)\s+prossim[oi]\s+(?:alle\s+)?(\d{1,2})(?:[:\.](\d{2}))?", text_lower)
-    if match:
-        nome_giorno = match.group(1)
-        ora = int(match.group(2))
-        minuti = int(match.group(3) or 0)
-        if nome_giorno in giorni_settimana and 0 <= ora <= 23 and 0 <= minuti <= 59:
-            giorno_target_num = giorni_settimana[nome_giorno]
-            giorni_da_aggiungere = (giorno_target_num - now.weekday() + 7) % 7
-            if giorni_da_aggiungere == 0: # If it's today, go to next week
-                 giorni_da_aggiungere = 7
-            giorno_futuro = now.date() + timedelta(days=giorni_da_aggiungere)
-            target_date = datetime.datetime(giorno_futuro.year, giorno_futuro.month, giorno_futuro.day, ora, minuti)
-            return target_date
-
-    # Pattern 5: "alle HH[:MM]" (prefer future)
-    match = re.search(r"alle\s+(\d{1,2})(?:[:\.](\d{2}))?", text_lower)
-    if match:
-        ora = int(match.group(1))
-        minuti = int(match.group(2) or 0)
-        if 0 <= ora <= 23 and 0 <= minuti <= 59:
-            ora_target = datetime.time(ora, minuti)
-            ora_attuale = now.time()
-            if ora_target > ora_attuale:
-                # Same day, future time
-                target_date = datetime.datetime.combine(now.date(), ora_target)
-            else:
-                # Next day
-                domani = now.date() + timedelta(days=1)
-                target_date = datetime.datetime.combine(domani, ora_target)
-            return target_date
-
-    # Pattern 6: "il GG mese alle HH[:MM]" or "GG mese HH:MM" or "GG mese alle HH"
-    match = re.search(r"(?:il\s+)?(\d{1,2})\s+([a-zì]+)\s+(?:alle\s+)?(\d{1,2})(?:[:\.](\d{2}))?", text_lower)
-    if match:
-        giorno = int(match.group(1))
-        nome_mese = match.group(2)
-        ora = int(match.group(3))
-        minuti = int(match.group(4) or 0)
-        if nome_mese in mesi and 1 <= giorno <= 31 and 0 <= ora <= 23 and 0 <= minuti <= 59:
-            mese = mesi[nome_mese]
-            anno = now.year
-            # Basic logic: if month is in the past, assume next year
-            if mese < now.month or (mese == now.month and giorno < now.day):
-                anno += 1
-            try:
-                target_date = datetime.datetime(anno, mese, giorno, ora, minuti)
-                return target_date
-            except ValueError: # Invalid date like Feb 30
-                pass # Try next pattern
-
-    # Fallback/Default: if no pattern matched
-    return None
-
-#Funzione di inizio bot
+# --- START BOT ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.message.from_user
     id_utente_db = get_or_create_user(user.id, user.first_name)
@@ -266,8 +178,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     return ConversationHandler.END
 
 
-#HANDLERS:
-#Crea annuncio:
+# --- CONVERSAZIONI ---
+# --- CREA ANNUNCIO ---
 async def nuovo_annuncio_handler_testo_guida(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Perfetto! 👍\nPer creare un nuovo annuncio, **inviami una foto con una breve descrizione nella didascalia**.\n\nL'IA analizzerà l'immagine per darti suggerimenti migliori!"
@@ -383,7 +295,6 @@ async def crea_prosegui_handler(update: Update, context: ContextTypes.DEFAULT_TY
     
     # Passiamo allo stato successivo (che già esiste!)
     return CREA_ATTESA_CATEGORIA
-
 
 async def crea_menu_modifica_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
@@ -634,7 +545,7 @@ async def ricevi_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     return ConversationHandler.END
 
 
-#Segna venduto un annuncio:   
+# --- SEGNA VENDUTO ---  
 async def vendi_wizard_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.message.from_user
     id_utente_db = get_or_create_user(user.id, user.first_name)
@@ -664,11 +575,11 @@ async def vendi_wizard_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
             [InlineKeyboardButton(testo_pulsante_piccolo, callback_data=callback_data)]
         )
 
-    await update.message.reply_text(
+    messaggio_inviato = await update.message.reply_text(
         messaggio_intro,
         reply_markup=InlineKeyboardMarkup(tastiera_annunci)
     )
-    
+    context.user_data['messaggio_con_pulsanti_id'] = messaggio_inviato.message_id
     # Entriamo nel primo stato del wizard di vendita
     return VENDI_ATTESA_SCELTA
 
@@ -733,6 +644,7 @@ async def vendi_ricevi_prezzo(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data.clear()
     return ConversationHandler.END
 
+
 # ---ELIMINA UN ANNUNCIO ---
 async def elimina_wizard_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
@@ -766,11 +678,12 @@ async def elimina_wizard_start(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton(testo_pulsante_corto, callback_data=callback_data)]
         )
 
-    await update.message.reply_text(
+    messaggio_inviato = await update.message.reply_text(
         f"Hai {len(annunci_attivi)} annunci attivi.\nQuale vuoi eliminare?",
         reply_markup=InlineKeyboardMarkup(tastiera_annunci)
     )
-    
+    context.user_data['messaggio_con_pulsanti_id'] = messaggio_inviato.message_id
+
     return ELIMINA_ATTESA_SCELTA
 
 async def elimina_ricevi_scelta(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -828,7 +741,233 @@ async def elimina_esegui_conferma(update: Update, context: ContextTypes.DEFAULT_
     return ConversationHandler.END
 
 
-#La lista degli annunci
+# --- MODIFICA ANNUNCIO ---
+async def modifica_wizard_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Inizia il wizard /modifica. 
+    Chiede all'utente QUALE annuncio vuole modificare.
+    """
+    user = update.message.from_user
+    id_utente_db = get_or_create_user(user.id, user.first_name)
+    
+    annunci_attivi = ottieni_annunci_utente(id_utente_db)
+    
+    if not annunci_attivi:
+        await update.message.reply_text("Non hai annunci attivi da modificare.", reply_markup=crea_menu_principale())
+        return ConversationHandler.END
+
+    tastiera_annunci = []
+    for annuncio in annunci_attivi:
+        callback_data = f"modifica_{annuncio['id']}" # Prefisso 'modifica_'
+        id_formattato = f"#{annuncio['id']:04d}"
+        titolo = annuncio['titolo_generato']
+        
+        testo_pulsante = f"🏷️ {id_formattato} - {titolo}"
+        testo_pulsante_corto = (testo_pulsante[:40] + '...') if len(testo_pulsante) > 40 else testo_pulsante
+        
+        tastiera_annunci.append([InlineKeyboardButton(testo_pulsante_corto, callback_data=callback_data)])
+
+    messaggio_menu_modifica = await update.message.reply_text(
+        f"Hai {len(annunci_attivi)} annunci.\nQuale vuoi modificare?",
+        reply_markup=InlineKeyboardMarkup(tastiera_annunci)
+    )
+    context.user_data['messaggio_con_pulsanti_id'] = messaggio_menu_modifica.message_id
+    
+    return MODIFICA_ATTESA_SCELTA_ANNUNCIO
+
+async def modifica_ricevi_scelta_annuncio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    L'utente ha scelto un annuncio. Salviamo l'ID e mostriamo il menu di modifica.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    id_annuncio_scelto = int(query.data.split('_')[1])
+    
+    # Salviamo l'ID nello "zainetto" per tutti i prossimi step
+    context.user_data['id_annuncio_da_modificare'] = id_annuncio_scelto
+    
+    messaggio_menu_modifica = await query.edit_message_text(
+        text=f"Hai selezionato l'annuncio `#{id_annuncio_scelto:04d}`.\n\nCosa vuoi modificare?",
+        # Riusiamo la stessa tastiera del wizard di creazione!
+        reply_markup=crea_tastiera_menu_modifica(), 
+        parse_mode='Markdown'
+    )
+    context.user_data['messaggio_con_pulsanti_id'] = messaggio_menu_modifica.message_id
+    return MODIFICA_MENU_CAMPI
+
+async def _mostra_menu_modifica_esistente(update: Update, context: ContextTypes.DEFAULT_TYPE, messaggio_intro: str) -> int:
+    """Helper per mostrare il menu di modifica DOPO un aggiornamento."""
+    # Questo è quasi identico a _mostra_menu_modifica, ma non possiamo riusarlo
+    # perché lo stato di ritorno (MODIFICA_MENU_CAMPI) è diverso.
+    messaggio_menu_modifica = None
+    if update.callback_query:
+        await update.callback_query.answer()
+        messaggio_menu_modifica = await update.callback_query.edit_message_text(
+            text=messaggio_intro,
+            reply_markup=crea_tastiera_menu_modifica()
+        )
+    else: 
+        messaggio_menu_modifica = await update.message.reply_text(
+            text=messaggio_intro,
+            reply_markup=crea_tastiera_menu_modifica()
+        )
+    if messaggio_menu_modifica:
+        context.user_data['messaggio_con_pulsanti_id'] = messaggio_menu_modifica.message_id
+    return MODIFICA_MENU_CAMPI
+
+async def modifica_richiedi_nuovo_titolo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Chiede il nuovo titolo, pre-compilandolo con quello attuale dal DB."""
+    query = update.callback_query
+    await query.answer()
+    
+    id_utente_db = get_or_create_user(query.from_user.id, query.from_user.first_name)
+    id_annuncio = context.user_data.get('id_annuncio_da_modificare')
+    
+    annuncio = ottieni_dettagli_annuncio(id_utente_db, id_annuncio)
+    titolo_attuale = annuncio['titolo_generato'] if annuncio else ''
+
+    tastiera_prefill = InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            text="Clicca qui per modificare il titolo", 
+            switch_inline_query_current_chat=titolo_attuale
+        )]])
+    
+    messaggio_menu_modifica = await query.edit_message_text(
+        text="Inviami il nuovo titolo.\n(Clicca il pulsante sotto per pre-compilare 👇)",
+        reply_markup=tastiera_prefill
+    )
+    context.user_data['messaggio_con_pulsanti_id'] = messaggio_menu_modifica.message_id
+    return MODIFICA_ATTESA_NUOVO_TITOLO
+
+async def modifica_richiedi_nuova_descrizione(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Chiede la nuova descrizione, pre-compilandola con quella attuale."""
+    query = update.callback_query
+    await query.answer()
+    
+    id_utente_db = get_or_create_user(query.from_user.id, query.from_user.first_name)
+    id_annuncio = context.user_data.get('id_annuncio_da_modificare')
+    
+    annuncio = ottieni_dettagli_annuncio(id_utente_db, id_annuncio)
+    desc_attuale = annuncio['descrizione_generata'] if annuncio else ''
+
+    tastiera_prefill = InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            text="Clicca qui per modificare la descrizione", 
+            switch_inline_query_current_chat=desc_attuale
+        )]])
+    
+    messaggio_menu_modifica = await query.edit_message_text(
+        text="Inviami la nuova descrizione.\n(Clicca il pulsante sotto per pre-compilare 👇)",
+        reply_markup=tastiera_prefill
+    )
+    context.user_data['messaggio_con_pulsanti_id'] = messaggio_menu_modifica.message_id
+
+    return MODIFICA_ATTESA_NUOVA_DESCRIZIONE
+
+async def modifica_richiedi_nuovo_prezzo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Chiede il nuovo prezzo, pre-compilandolo con quello attuale."""
+    query = update.callback_query
+    await query.answer()
+    
+    id_utente_db = get_or_create_user(query.from_user.id, query.from_user.first_name)
+    id_annuncio = context.user_data.get('id_annuncio_da_modificare')
+    
+    annuncio = ottieni_dettagli_annuncio(id_utente_db, id_annuncio)
+    prezzo_attuale = annuncio['prezzo_suggerito'] if annuncio else 0.0
+
+    tastiera_prefill = InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            text="Clicca qui per modificare il prezzo", 
+            switch_inline_query_current_chat=str(prezzo_attuale) # Convertiamo il float in stringa
+        )]])
+    
+    messaggio_menu_modifica = await query.edit_message_text(
+        text="Inviami il nuovo prezzo (solo il numero, es. 25.50).\n(Clicca il pulsante sotto per pre-compilare 👇)",
+        reply_markup=tastiera_prefill
+    )
+    context.user_data['messaggio_con_pulsanti_id'] = messaggio_menu_modifica.message_id
+
+    return MODIFICA_ATTESA_NUOVO_PREZZO
+
+async def modifica_ricevi_nuovo_titolo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Riceve il nuovo titolo, lo pulisce, lo SALVA SUL DB e torna al menu modifica."""
+    testo_pulito = update.message.text
+    prefisso_bot = f"@{context.bot.username} "
+    if testo_pulito.startswith(prefisso_bot):
+        testo_pulito = testo_pulito[len(prefisso_bot):]
+
+    id_utente_db = get_or_create_user(update.message.from_user.id, update.message.from_user.first_name)
+    id_annuncio = context.user_data.get('id_annuncio_da_modificare')
+    
+    # Aggiorniamo il DB immediatamente
+    aggiorna_campo_annuncio(id_utente_db, id_annuncio, 'titolo_generato', testo_pulito)
+    
+    return await _mostra_menu_modifica_esistente(update, context, "✅ Titolo aggiornato! Vuoi modificare altro?")
+
+async def modifica_ricevi_nuova_descrizione(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Riceve la nuova descrizione, la pulisce, la SALVA SUL DB e torna al menu modifica."""
+    
+    desc_pulita = update.message.text
+    prefisso_bot = f"@{context.bot.username} "
+    if desc_pulita.startswith(prefisso_bot):
+        desc_pulita = desc_pulita[len(prefisso_bot):]
+
+    id_utente_db = get_or_create_user(update.message.from_user.id, update.message.from_user.first_name)
+    id_annuncio = context.user_data.get('id_annuncio_da_modificare')
+    
+    # Aggiorniamo il DB immediatamente
+    aggiorna_campo_annuncio(id_utente_db, id_annuncio, 'descrizione_generata', desc_pulita)
+    
+    return await _mostra_menu_modifica_esistente(update, context, "✅ Descrizione aggiornata! Vuoi modificare altro?")
+
+async def modifica_ricevi_nuovo_prezzo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Riceve il nuovo prezzo, lo pulisce, lo VALIDA, lo SALVA SUL DB e torna al menu modifica."""
+    
+    prezzo_testo = update.message.text
+    prefisso_bot = f"@{context.bot.username} "
+    if prezzo_testo.startswith(prefisso_bot):
+        prezzo_testo = prezzo_testo[len(prefisso_bot):]
+
+    id_utente_db = get_or_create_user(update.message.from_user.id, update.message.from_user.first_name)
+    id_annuncio = context.user_data.get('id_annuncio_da_modificare')
+    
+    try:
+        nuovo_prezzo = float(prezzo_testo.replace(',', '.'))
+        
+        # Aggiorniamo il DB immediatamente
+        aggiorna_campo_annuncio(id_utente_db, id_annuncio, 'prezzo_suggerito', nuovo_prezzo)
+        
+        return await _mostra_menu_modifica_esistente(update, context, f"✅ Prezzo aggiornato a {nuovo_prezzo}€! Vuoi modificare altro?")
+    
+    except ValueError:
+        # Se l'utente non scrive un numero
+        await update.message.reply_text(
+            "Errore 😅 Quello non è un numero valido. Riprova (es. 25 o 14.50)."
+        )
+        return MODIFICA_ATTESA_NUOVO_PREZZO # Rimaniamo nello stato
+
+async def modifica_fatto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """L'utente ha finito di modificare. Pulisce lo zainetto e torna al menu."""
+    query = update.callback_query
+    await query.answer()
+    
+    id_annuncio = context.user_data.get('id_annuncio_da_modificare')
+    
+    await query.edit_message_text(text=f"Modifiche all'annuncio `#{id_annuncio:04d}` salvate.", parse_mode='Markdown')
+    
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text="Ritorno al menu principale.",
+        reply_markup=crea_menu_principale()
+    )
+    
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
+#HANDLER
+# --- LISTA ANNUNCI ---
 async def lista_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     print("Ricevuto comando /lista")
@@ -871,7 +1010,7 @@ async def lista_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text(f"Si è verificato un errore durante il recupero dei tuoi annunci: {e}")
 
 
-#Analisi:
+# --- ANALISI ---
 async def analisi_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     print("Ricevuto comando /analisi")
     user = update.message.from_user
@@ -915,7 +1054,23 @@ async def analisi_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         print(f"Errore durante /analisi: {e}")
         await update.message.reply_text(f"Si è verificato un errore durante la generazione delle statistiche: {e}")
 
-#Annulla l'azione che si sta facendo
+
+# --- AIUTO / ANNULLA ---
+async def aiuto_annulla_globale(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handler per il pulsante 'Aiuto / Annulla'."""
+    await update.message.reply_text(
+        "Sei nel menu principale. Non c'è nessuna operazione da annullare.\n\n"
+        "Premi i pulsanti per iniziare:\n"
+        "🆕 **Crea Annuncio**: Invia una foto con didascalia per iniziare.\n"
+        "🛍️ **I Miei Annunci**: Mostra tutti i tuoi annunci.\n"
+        "✅ **Segna come Venduto**: Inizia la procedura per segnare un annuncio come venduto.\n"
+        "📈 **Statistiche**: Mostra l'analisi delle tue vendite.",
+        reply_markup=crea_menu_principale(),
+        parse_mode='Markdown'
+    )
+
+
+# --- UTIL ---
 async def annulla(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
     Annulla la conversazione corrente, prova a eliminare la bozza
@@ -966,22 +1121,6 @@ async def annulla(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
     return ConversationHandler.END
 
-#Funzione di aiuto
-async def aiuto_annulla_globale(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler per il pulsante 'Aiuto / Annulla'."""
-    await update.message.reply_text(
-        "Sei nel menu principale. Non c'è nessuna operazione da annullare.\n\n"
-        "Premi i pulsanti per iniziare:\n"
-        "🆕 **Crea Annuncio**: Invia una foto con didascalia per iniziare.\n"
-        "🛍️ **I Miei Annunci**: Mostra tutti i tuoi annunci.\n"
-        "✅ **Segna come Venduto**: Inizia la procedura per segnare un annuncio come venduto.\n"
-        "📈 **Statistiche**: Mostra l'analisi delle tue vendite.",
-        reply_markup=crea_menu_principale(),
-        parse_mode='Markdown'
-    )
-
-
-#gestione dei messaggi senza senso
 async def gestisci_testo_sconosciuto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Risponde a qualsiasi messaggio di testo non riconosciuto."""
     await update.message.reply_text(
@@ -998,7 +1137,100 @@ async def gestisci_testo_sconosciuto_in_conversazione(update: Update, context: C
         reply_markup=update.message.reply_markup # Mantiene la tastiera (o la rimuove se non c'è)
     )
 
+def parse_date_regex(text):
+    """
+    Parses Italian date/time strings using regex and Python logic.
+    Prefers future dates.
+    """
+    now = datetime.datetime.now()
+    text_lower = text.lower().strip()
+    target_date = None
 
+    # Pattern 1: "tra X minuti/ore"
+    match = re.search(r"tra\s+(\d+)\s+(minut[oi]|or[ae])", text_lower)
+    if match:
+        quantita = int(match.group(1))
+        unita = match.group(2)
+        if unita.startswith("minut"):
+            target_date = now + timedelta(minutes=quantita)
+        else: # ore
+            target_date = now + timedelta(hours=quantita)
+        return target_date
+
+    # Pattern 2: "domani alle HH[:MM]"
+    match = re.search(r"domani\s+alle\s+(\d{1,2})(?:[:\.](\d{2}))?", text_lower)
+    if match:
+        ora = int(match.group(1))
+        minuti = int(match.group(2) or 0) # Default to 0 if minutes are omitted
+        if 0 <= ora <= 23 and 0 <= minuti <= 59:
+            domani = now.date() + timedelta(days=1)
+            target_date = datetime.datetime(domani.year, domani.month, domani.day, ora, minuti)
+            return target_date
+
+    # Pattern 3: "tra X giorni alle HH[:MM]"
+    match = re.search(r"tra\s+(\d+)\s+giorni\s+alle\s+(\d{1,2})(?:[:\.](\d{2}))?", text_lower)
+    if match:
+        giorni = int(match.group(1))
+        ora = int(match.group(2))
+        minuti = int(match.group(3) or 0)
+        if 0 <= ora <= 23 and 0 <= minuti <= 59:
+            giorno_futuro = now.date() + timedelta(days=giorni)
+            target_date = datetime.datetime(giorno_futuro.year, giorno_futuro.month, giorno_futuro.day, ora, minuti)
+            return target_date
+
+    # Pattern 4: "giorno_settimana prossimo alle HH[:MM]"
+    match = re.search(r"([a-zì]+)\s+prossim[oi]\s+(?:alle\s+)?(\d{1,2})(?:[:\.](\d{2}))?", text_lower)
+    if match:
+        nome_giorno = match.group(1)
+        ora = int(match.group(2))
+        minuti = int(match.group(3) or 0)
+        if nome_giorno in giorni_settimana and 0 <= ora <= 23 and 0 <= minuti <= 59:
+            giorno_target_num = giorni_settimana[nome_giorno]
+            giorni_da_aggiungere = (giorno_target_num - now.weekday() + 7) % 7
+            if giorni_da_aggiungere == 0: # If it's today, go to next week
+                 giorni_da_aggiungere = 7
+            giorno_futuro = now.date() + timedelta(days=giorni_da_aggiungere)
+            target_date = datetime.datetime(giorno_futuro.year, giorno_futuro.month, giorno_futuro.day, ora, minuti)
+            return target_date
+
+    # Pattern 5: "alle HH[:MM]" (prefer future)
+    match = re.search(r"alle\s+(\d{1,2})(?:[:\.](\d{2}))?", text_lower)
+    if match:
+        ora = int(match.group(1))
+        minuti = int(match.group(2) or 0)
+        if 0 <= ora <= 23 and 0 <= minuti <= 59:
+            ora_target = datetime.time(ora, minuti)
+            ora_attuale = now.time()
+            if ora_target > ora_attuale:
+                # Same day, future time
+                target_date = datetime.datetime.combine(now.date(), ora_target)
+            else:
+                # Next day
+                domani = now.date() + timedelta(days=1)
+                target_date = datetime.datetime.combine(domani, ora_target)
+            return target_date
+
+    # Pattern 6: "il GG mese alle HH[:MM]" or "GG mese HH:MM" or "GG mese alle HH"
+    match = re.search(r"(?:il\s+)?(\d{1,2})\s+([a-zì]+)\s+(?:alle\s+)?(\d{1,2})(?:[:\.](\d{2}))?", text_lower)
+    if match:
+        giorno = int(match.group(1))
+        nome_mese = match.group(2)
+        ora = int(match.group(3))
+        minuti = int(match.group(4) or 0)
+        if nome_mese in mesi and 1 <= giorno <= 31 and 0 <= ora <= 23 and 0 <= minuti <= 59:
+            mese = mesi[nome_mese]
+            anno = now.year
+            # Basic logic: if month is in the past, assume next year
+            if mese < now.month or (mese == now.month and giorno < now.day):
+                anno += 1
+            try:
+                target_date = datetime.datetime(anno, mese, giorno, ora, minuti)
+                return target_date
+            except ValueError: # Invalid date like Feb 30
+                pass # Try next pattern
+
+    # Fallback/Default: if no pattern matched
+    return None
 
 # --- FUNZIONE DI AVVIO ---
 def bot_start():
@@ -1010,7 +1242,8 @@ def bot_start():
             #MessageHandler(filters.PHOTO, foto_handler),
             MessageHandler(filters.Text(T_CREA), nuovo_annuncio_handler_testo_guida),
             MessageHandler(filters.Text(T_VENDI), vendi_wizard_start),
-            MessageHandler(filters.Text(T_ELIMINA), elimina_wizard_start)  
+            MessageHandler(filters.Text(T_ELIMINA), elimina_wizard_start),
+            MessageHandler(filters.Text(T_MODIFICA), modifica_wizard_start)  
         ],
         states={
             # --- FLUSSO DI CREAZIONE ---
@@ -1069,7 +1302,29 @@ def bot_start():
                 CallbackQueryHandler(elimina_esegui_conferma, pattern="^elimina_conferma_si_"),
                 CallbackQueryHandler(annulla, pattern="^elimina_conferma_no$"),
                 MessageHandler(filters.Text(T_AIUTO), annulla),
-            ]  
+            ],
+            # --- FLUSSO DI MODIFICA ---
+            MODIFICA_ATTESA_SCELTA_ANNUNCIO: [
+                CallbackQueryHandler(modifica_ricevi_scelta_annuncio, pattern=r"^modifica_\d+$")
+            ],
+            MODIFICA_MENU_CAMPI: [
+                CallbackQueryHandler(modifica_richiedi_nuovo_titolo, pattern="^crea_modifica_titolo$"),
+                CallbackQueryHandler(modifica_richiedi_nuova_descrizione, pattern="^crea_modifica_desc$"),
+                CallbackQueryHandler(modifica_richiedi_nuovo_prezzo, pattern="^crea_modifica_prezzo$"),
+                CallbackQueryHandler(modifica_fatto, pattern="^crea_modifica_fatto$")
+            ],
+            MODIFICA_ATTESA_NUOVO_TITOLO: [
+                MessageHandler(filters.Text(T_AIUTO), annulla),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, modifica_ricevi_nuovo_titolo)
+            ],
+            MODIFICA_ATTESA_NUOVA_DESCRIZIONE: [
+                MessageHandler(filters.Text(T_AIUTO), annulla),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, modifica_ricevi_nuova_descrizione)
+            ],
+            MODIFICA_ATTESA_NUOVO_PREZZO: [
+                MessageHandler(filters.Text(T_AIUTO), annulla),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, modifica_ricevi_nuovo_prezzo)
+            ]
         },
         fallbacks=[
             # Il comando /annulla funziona DENTRO la conversazione
