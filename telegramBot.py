@@ -350,7 +350,7 @@ async def crea_prosegui_handler(update: Update, context: ContextTypes.DEFAULT_TY
         titolo_generato=bozza['titolo'],
         descrizione_generata=bozza['descrizione'],
         prezzo_suggerito=bozza['prezzo'],
-        categoria=None # Lo impostiamo al prossimo step
+        id_categoria=None # Lo impostiamo al prossimo step
     )
     
     # Aggiorniamo lo "zainetto":
@@ -401,13 +401,11 @@ async def _mostra_menu_modifica(update: Update, context: ContextTypes.DEFAULT_TY
     
     return CREA_MENU_MODIFICA
 
-
 async def crea_richiedi_nuovo_titolo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Chiede all'utente il nuovo titolo, usando 'switch_inline_query_current_chat'."""
     query = update.callback_query
     await query.answer()
     
-    # Recupera il titolo attuale dallo "zainetto"
     titolo_attuale = context.user_data.get('bozza_annuncio', {}).get('titolo', '')
 
     tastiera_prefill = InlineKeyboardMarkup([[
@@ -451,7 +449,7 @@ async def crea_richiedi_nuovo_prezzo(update: Update, context: ContextTypes.DEFAU
     tastiera_prefill = InlineKeyboardMarkup([[
         InlineKeyboardButton(
             text="Clicca qui per modificare il prezzo", 
-            switch_inline_query_current_chat=str(prezzo_attuale) # Convertiamo il float in stringa
+            switch_inline_query_current_chat=str(prezzo_attuale)
         )]])
     
     await query.edit_message_text(
@@ -463,6 +461,10 @@ async def crea_richiedi_nuovo_prezzo(update: Update, context: ContextTypes.DEFAU
 async def crea_ricevi_nuovo_titolo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Riceve il nuovo titolo, lo salva nello 'zainetto' e torna al menu modifica."""
     nuovo_titolo = update.message.text
+    prefisso_bot = f"@{context.bot.username} "
+    
+    if nuovo_titolo.startswith(prefisso_bot):
+        nuovo_titolo = nuovo_titolo[len(prefisso_bot):]
     context.user_data['bozza_annuncio']['titolo'] = nuovo_titolo
     
     # Torniamo al menu di modifica
@@ -471,14 +473,23 @@ async def crea_ricevi_nuovo_titolo(update: Update, context: ContextTypes.DEFAULT
 async def crea_ricevi_nuova_descrizione(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Riceve la nuova descrizione, la salva e torna al menu modifica."""
     nuova_descrizione = update.message.text
+    prefisso_bot = f"@{context.bot.username} "
+
+    if nuova_descrizione.startswith(prefisso_bot):
+        nuova_descrizione = nuova_descrizione[len(prefisso_bot):]
     context.user_data['bozza_annuncio']['descrizione'] = nuova_descrizione
     
     return await _mostra_menu_modifica(update, context, "✅ Descrizione aggiornata! Cosa vuoi modificare ora?")
 
 async def crea_ricevi_nuovo_prezzo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Riceve il nuovo prezzo, lo valida, lo salva e torna al menu modifica."""
+    prezzo_testo = update.message.text
+    prefisso_bot = f"@{context.bot.username} "
+
+    if prezzo_testo.startswith(prefisso_bot):
+        prezzo_testo = prezzo_testo[len(prefisso_bot):]
     try:
-        nuovo_prezzo = float(update.message.text.replace(',', '.'))
+        nuovo_prezzo = float(prezzo_testo.replace(',', '.'))
         context.user_data['bozza_annuncio']['prezzo'] = nuovo_prezzo
         
         return await _mostra_menu_modifica(update, context, f"✅ Prezzo aggiornato a {nuovo_prezzo}€! Cosa vuoi modificare ora?")
@@ -895,21 +906,26 @@ def bot_start():
                 CallbackQueryHandler(crea_modifica_fatto, pattern="^crea_modifica_fatto$")            
             ],
             CREA_ATTESA_NUOVO_TITOLO: [
+                MessageHandler(filters.Text(T_AIUTO), annulla),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, crea_ricevi_nuovo_titolo)
             ],
             CREA_ATTESA_NUOVA_DESCRIZIONE: [
+                MessageHandler(filters.Text(T_AIUTO), annulla),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, crea_ricevi_nuova_descrizione)
             ],
             CREA_ATTESA_NUOVO_PREZZO: [
+                MessageHandler(filters.Text(T_AIUTO), annulla),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, crea_ricevi_nuovo_prezzo)
             ],
             CREA_ATTESA_CATEGORIA: [
+                MessageHandler(filters.Text([T_LISTA, T_ANALISI, T_VENDI, T_CREA]), gestisci_testo_sconosciuto_in_conversazione),
                 CallbackQueryHandler(ricevi_categoria, pattern="^cat_") 
             ],
             CREA_ATTESA_PIATTAFORMA: [
                 CallbackQueryHandler(ricevi_piattaforma, pattern="^piat_")
             ],
             CREA_ATTESA_DATA: [
+                MessageHandler(filters.Text(T_AIUTO), annulla),
                 MessageHandler(filters.Text([T_LISTA, T_ANALISI, T_VENDI, T_CREA]), gestisci_testo_sconosciuto_in_conversazione),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, ricevi_data)
             ],
