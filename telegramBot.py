@@ -247,11 +247,11 @@ async def processa_e_mostra_anteprima(descrizione_input: str, update: Update, co
     
     await update.message.reply_text(risposta_anteprima, parse_mode='MarkdownV2')
     # 5. Chiediamo la conferma
-    await update.message.reply_text(
+    messaggio_inviato = await update.message.reply_text(
         "Il testo generato va bene o vuoi modificare qualcosa?",
         reply_markup=crea_tastiera_conferma_anteprima()
     )
-    
+    context.user_data['messaggio_con_pulsanti_id'] = messaggio_inviato.message_id
     # 6. Passiamo al nuovo stato d'attesa
     return CREA_ATTESA_CONFERMA_ANTEPRIMA
 
@@ -288,10 +288,11 @@ async def crea_prosegui_handler(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data['id_annuncio_corrente'] = nuovo_id
 
     # Ora chiediamo la categoria
-    await query.edit_message_text(
+    messaggio_inviato = await query.edit_message_text(
         text="✅ Testo confermato e salvato! Ora scegli una categoria:",
         reply_markup=crea_tastiera_categorie()
     )
+    context.user_data['messaggio_con_pulsanti_id'] = messaggio_inviato.message_id
     
     # Passiamo allo stato successivo (che già esiste!)
     return CREA_ATTESA_CATEGORIA
@@ -304,29 +305,31 @@ async def crea_menu_modifica_handler(update: Update, context: ContextTypes.DEFAU
     query = update.callback_query
     await query.answer()
     
-    await query.edit_message_text(
+    messaggio_inviato = await query.edit_message_text(
         text="Cosa vuoi modificare?",
         reply_markup=crea_tastiera_menu_modifica()
     )
-    
+    context.user_data['messaggio_con_pulsanti_id'] = messaggio_inviato.message_id
     # Passiamo allo stato "Menu Modifica"
     return CREA_MENU_MODIFICA
 
 async def _mostra_menu_modifica(update: Update, context: ContextTypes.DEFAULT_TYPE, messaggio_intro: str) -> int:
     """Helper per mostrare il menu di modifica."""
+    messaggio_inviato = None
     # Controlla se l'update è un click (query) o un messaggio di testo
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.edit_message_text(
+        messaggio_inviato = await update.callback_query.edit_message_text(
             text=messaggio_intro,
             reply_markup=crea_tastiera_menu_modifica()
         )
     else: # L'update è un messaggio di testo (es. l'utente ha inviato un nuovo titolo)
-        await update.message.reply_text(
+        messaggio_inviato = await update.message.reply_text(
             text=messaggio_intro,
             reply_markup=crea_tastiera_menu_modifica()
         )
-    
+    if messaggio_inviato:
+        context.user_data['messaggio_con_pulsanti_id'] = messaggio_inviato.message_id
     return CREA_MENU_MODIFICA
 
 async def crea_richiedi_nuovo_titolo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -342,10 +345,11 @@ async def crea_richiedi_nuovo_titolo(update: Update, context: ContextTypes.DEFAU
             switch_inline_query_current_chat=titolo_attuale
         )]])
     
-    await query.edit_message_text(
+    messaggio_inviato = await query.edit_message_text(
         text="Inviami il nuovo titolo.\n(Clicca il pulsante sotto per pre-compilare la casella di testo 👇)",
         reply_markup=tastiera_prefill
     )
+    context.user_data['messaggio_con_pulsanti_id'] = messaggio_inviato.message_id
     return CREA_ATTESA_NUOVO_TITOLO
 
 async def crea_richiedi_nuova_descrizione(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -361,10 +365,11 @@ async def crea_richiedi_nuova_descrizione(update: Update, context: ContextTypes.
             switch_inline_query_current_chat=desc_attuale
         )]])
     
-    await query.edit_message_text(
+    messaggio_inviato = await query.edit_message_text(
         text="Inviami la nuova descrizione.\n(Clicca il pulsante sotto per pre-compilare 👇)",
         reply_markup=tastiera_prefill
     )
+    context.user_data['messaggio_con_pulsanti_id'] = messaggio_inviato.message_id
     return CREA_ATTESA_NUOVA_DESCRIZIONE
 
 async def crea_richiedi_nuovo_prezzo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -380,10 +385,11 @@ async def crea_richiedi_nuovo_prezzo(update: Update, context: ContextTypes.DEFAU
             switch_inline_query_current_chat=str(prezzo_attuale)
         )]])
     
-    await query.edit_message_text(
+    messaggio_inviato = await query.edit_message_text(
         text="Inviami il nuovo prezzo (solo il numero, es. 25.50).\n(Clicca il pulsante sotto per pre-compilare 👇)",
         reply_markup=tastiera_prefill
     )
+    context.user_data['messaggio_con_pulsanti_id'] = messaggio_inviato.message_id
     return CREA_ATTESA_NUOVO_PREZZO
 
 async def crea_ricevi_nuovo_titolo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -458,12 +464,12 @@ async def crea_modifica_fatto(update: Update, context: ContextTypes.DEFAULT_TYPE
         "Il testo va bene ora?"
     )
     
-    await query.edit_message_text(
+    messaggio_inviato = await query.edit_message_text(
         text=risposta_anteprima,
         reply_markup=crea_tastiera_conferma_anteprima(),
         parse_mode='MarkdownV2'
     )
-    
+    context.user_data['messaggio_con_pulsanti_id'] = messaggio_inviato.message_id
     # Torniamo allo stato di conferma
     return CREA_ATTESA_CONFERMA_ANTEPRIMA
 
@@ -477,11 +483,11 @@ async def ricevi_categoria(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     # Estraiamo l'ID della categoria dal pulsante (es. "cat_1" -> "1")
     id_categoria_scelta = int(query.data.split('_')[1])
     context.user_data['id_categoria_scelta'] = id_categoria_scelta
-    await query.edit_message_text(
+    messaggio_inviato = await query.edit_message_text(
         text=f"✅ Categoria scelta! Ora scegli su quale piattaforma vuoi pubblicare:",
         reply_markup=crea_tastiera_piattaforme()
     )
-    
+    context.user_data['messaggio_con_pulsanti_id'] = messaggio_inviato.message_id
     # Diciamo al ConversationHandler di passare allo stato "CREA_ATTESA_DATA"
     return CREA_ATTESA_PIATTAFORMA
 
