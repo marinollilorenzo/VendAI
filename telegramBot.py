@@ -95,11 +95,10 @@ def crea_menu_principale() -> ReplyKeyboardMarkup:
     tastiera = [
         [T_CREA],  # Una riga per il pulsante principale
         [T_LISTA, T_VENDI],
-        [T_MODIFICA, T_ELIMINA],
         [T_ANALISI, T_DETTAGLI],
+        [T_MODIFICA, T_ELIMINA],
         [T_AIUTO]
     ]
-    
     return ReplyKeyboardMarkup(
         tastiera, 
         resize_keyboard=True, # Adatta la tastiera allo schermo
@@ -1077,7 +1076,6 @@ async def dettagli_chiudi(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 # --- LISTA ANNUNCI ---
 async def lista_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
-    print("Ricevuto comando /lista")
     
     # --- Autenticazione Utente ---
     user = update.message.from_user
@@ -1118,7 +1116,6 @@ async def lista_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 # --- ANALISI ---
 async def analisi_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    print("Ricevuto comando /analisi")
     user = update.message.from_user
     id_utente_db = get_or_create_user(user.id, user.first_name)
     await update.message.reply_chat_action(action="upload_photo")
@@ -1500,5 +1497,5 @@ def bot_start():
     application.add_handler(MessageHandler(filters.Text(T_AIUTO), aiuto_annulla_globale))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, gestisci_testo_sconosciuto))
 
-    print("Bot avviato e in ascolto... (modalità MENU ATTIVA!)")
+    print("Bot avviato e in ascolto...")
     application.run_polling()

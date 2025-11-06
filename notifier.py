@@ -10,7 +10,6 @@ load_dotenv()
 TOKEN = os.getenv("TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-
 async def invia_notifica(bot, chat_id, testo_notifica):
     """Funzione generica per inviare una notifica."""
     try:
@@ -23,7 +22,6 @@ async def invia_notifica(bot, chat_id, testo_notifica):
     except Exception as e:
         print(f"Errore nell'invio della notifica: {e}")
         return False
-
 
 async def formatta_messaggio(annuncio, tipo_notifica="finale"):
     """Prepara il testo del messaggio da inviare."""
@@ -44,7 +42,6 @@ async def formatta_messaggio(annuncio, tipo_notifica="finale"):
         f"---\n{footer}"
     )
 
-
 async def main_loop():
     """Il ciclo principale del guardiano, ora con logica a 2 fasi."""
     if not TOKEN or not CHAT_ID:
@@ -52,10 +49,9 @@ async def main_loop():
         return
 
     bot = telegram.Bot(token=TOKEN)
-    print("Avvio del 'Guardiano Notifiche' (Logica a 2 fasi)... Controllo ogni 60 secondi.")
+    print("Avvio del 'Guardiano Notifiche'")
     
     while True:
-        print(f"Controllo annunci... (Ora: {datetime.datetime.now()})")
         now = datetime.datetime.now()        
         try:
             annunci_attivi = ottieni_annunci_attivi()
@@ -92,11 +88,9 @@ async def main_loop():
                             aggiorna_stato_annuncio(annuncio['id'], 4)
 
         except Exception as e:
-            print(f"Errore durante il ciclo di controllo: {e}")
-        
+            print(f"\n[{datetime.datetime.now()}] ERRORE CRITICO nel guardiano: {e}")
         # Aspetta 60 secondi prima del prossimo controllo
         await asyncio.sleep(60)
-
 
 if __name__ == "__main__":
     asyncio.run(main_loop())

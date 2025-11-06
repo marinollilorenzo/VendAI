@@ -1,6 +1,5 @@
 import sqlite3
 
-
 #INIZIALIZZAZIONE DATABASE
 def db_initialization():
     connection = sqlite3.connect("annunci.db")
@@ -161,8 +160,6 @@ def add_annuncement(id_utente, descrizione_input, titolo_generato, descrizione_g
     
     connection.commit()
     connection.close()
-    
-    print(f"Annuncio salvato con successo nel database. ID: {nuovo_id}")
     return nuovo_id
 
 def aggiorna_annuncio_con_programmazione(id_annuncio, id_categoria, id_piattaforma, data_pubblicazione):
@@ -197,8 +194,6 @@ def aggiorna_annuncio_con_programmazione(id_annuncio, id_categoria, id_piattafor
     connessione.commit()
     connessione.close()
     
-    print(f"Annuncio {id_annuncio} aggiornato. Programmazione: {data_pubblicazione}.")
-
 def aggiorna_stato_annuncio(id_annuncio, id_nuovo_stato):
     """Aggiorna la colonna id_stato per un annuncio specifico."""
     connessione = sqlite3.connect('annunci.db')
@@ -209,8 +204,6 @@ def aggiorna_stato_annuncio(id_annuncio, id_nuovo_stato):
     cursore.execute(sql_aggiorna, (id_nuovo_stato, id_annuncio))
     connessione.commit()
     connessione.close()
-    
-    print(f"Annuncio {id_annuncio} aggiornato allo stato {id_nuovo_stato}.")
 
 def segna_come_venduto(id_utente, id_annuncio, prezzo_vendita):
     """
@@ -247,12 +240,10 @@ def segna_come_venduto(id_utente, id_annuncio, prezzo_vendita):
         # 'rowcount' ci dice quante righe sono state modificate.
         # Se è 0, significa che l'annuncio non è stato trovato O non apparteneva all'utente.
         if cursore.rowcount == 0:
-            print(f"Tentativo di vendita fallito per annuncio {id_annuncio} dall'utente {id_utente}. Annuncio non trovato o non autorizzato.")
             connessione.close()
             return False
         
         connessione.close()
-        print(f"Annuncio {id_annuncio} segnato come venduto per l'utente {id_utente} a {prezzo_vendita}€.")
         return True
 
     except Exception as e:
@@ -280,12 +271,10 @@ def disattiva_annuncio(id_utente, id_annuncio):
         connessione.commit()
         
         if cursore.rowcount == 0:
-            print(f"Tentativo di disattivazione fallito per annuncio {id_annuncio}, utente {id_utente}.")
             connessione.close()
             return False
         
         connessione.close()
-        print(f"Annuncio {id_annuncio} disattivato (soft delete).")
         return True
 
     except Exception as e:
@@ -315,12 +304,10 @@ def aggiorna_campo_annuncio(id_utente, id_annuncio, campo, valore):
         connessione.commit()
         
         if cursore.rowcount == 0:
-            print(f"Aggiornamento campo fallito per annuncio {id_annuncio}, utente {id_utente}.")
             connessione.close()
             return False
         
         connessione.close()
-        print(f"Annuncio {id_annuncio}, campo '{campo}' aggiornato.")
         return True
 
     except Exception as e:
