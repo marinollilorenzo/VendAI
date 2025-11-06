@@ -60,15 +60,32 @@ def db_initialization():
     );
     """)
     stati_iniziali = [
-        ('bozza',),          # 1
-        ('programmato',),    # 2 (impostato dal bot)
-        ('pre-notificato',), # 3 (impostato dal notifier)
-        ('notificato',),     # 4 (impostato dal notifier)
-        ('venduto',)         # 5 (da implementare)
+        ('bozza',),           # ID 1
+        ('programmato',),     # ID 2
+        ('pre-notificato',),  # ID 3
+        ('notificato',),      # ID 4 (Pronto per la pubblicazione manuale)
+        ('venduto',)          # ID 5
     ]
-    categorie_iniziali = [('Abbigliamento',), ('elettronica',), ('libri/hobby',), ('casa',), ('altro',)]
-    piattaforme_iniziali = [('Vinted',), ('Subito',), ('Wallapop',), ('Vestaire Collection',)]
-    
+    piattaforme_iniziali = [
+        ('Vinted',),
+        ('Subito',),
+        ('Wallapop',),
+        ('eBay',),
+        ('Facebook Marketplace',),
+        ('Depop',),
+        ('Vestiaire Collective',)
+    ]
+    categorie_iniziali = [
+        ('Abbigliamento Uomo',),
+        ('Abbigliamento Donna',),
+        ('Scarpe',),
+        ('Accessori/Borse',),
+        ('Elettronica/Tech',),
+        ('Collezionismo/Vintage',),
+        ('Casa/Arredamento',),
+        ('Libri/Media',),
+        ('Altro',)
+    ]
     cursor.executemany("INSERT OR IGNORE INTO stato (nome) VALUES (?)", stati_iniziali)
     cursor.executemany("INSERT OR IGNORE INTO categoria (nome) VALUES (?)", categorie_iniziali)
     cursor.executemany("INSERT OR IGNORE INTO piattaforma (nome) VALUES (?)", piattaforme_iniziali)
