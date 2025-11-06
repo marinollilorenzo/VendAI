@@ -485,31 +485,55 @@ def ottieni_piattaforme_attive():
 
 def ottieni_dettagli_annuncio(id_utente, id_annuncio):
     """
-    Recupera tutti i dettagli di un annuncio specifico,
-    controllando che appartenga all'utente.
+    Recupera TUTTI i dettagli di un annuncio, unendo le tabelle
+    per avere i nomi leggibili di stato e piattaforma.
     """
     connessione = sqlite3.connect('annunci.db')
     connessione.row_factory = sqlite3.Row
     cursore = connessione.cursor()
 
     sql_query = """
-    SELECT * FROM annuncio
-    WHERE id = ? AND id_utente = ? AND is_cancellato = 0;
+    SELECT 
+        a.*,
+        s.nome AS nome_stato,
+        p.nome AS nome_piattaforma,
+        c.nome AS categoria
+    FROM annuncio a
+    LEFT JOIN stato s ON a.id_stato = s.id
+    LEFT JOIN categoria c ON a.id_categoria = c.id 
+    LEFT JOIN piattaforma p ON a.id_piattaforma = p.id
+    WHERE a.id = ? AND a.id_utente = ?;
     """
+    # Nota: non filtriamo per is_cancellato=0 perché potremmo voler
+    # vedere i dettagli anche di un annuncio nel cestino in futuro.
     
-    try:
-        cursore.execute(sql_query, (id_annuncio, id_utente))
-        annuncio = cursore.fetchone() # Prendiamo solo una riga
-        connessione.close()
-        
-        return dict(annuncio) if annuncio else None
-            
-    except Exception as e:
-        print(f"Errore in ottieni_dettagli_annuncio: {e}")
-        connessione.close()
-        return None
+    cursore.execute(sql_query, (id_annuncio, id_utente))
+    annuncio = cursore.fetchone()
+    connessione.close()
+    
+    return dict(annuncio) if annuncio else None
 
+#GRAFICI
+def ottieni_dati_grafico_categorie(id_utente):
+    """
+    Restituisce i dati per un grafico a torta:
+    Categoria -> Numero di vendite
+    """
+    connessione = sqlite3.connect('annunci.db')
+    cursore = connessione.cursor()
 
+    # Conta gli annunci VENDUTI (id_stato=5) raggruppati per categoria
+    sql = """
+    SELECT c.nome AS categoria, COUNT(a.id) as conteggio
+    FROM annuncio a
+    LEFT JOIN categoria c ON a.id_categoria = c.id
+    WHERE a.id_utente = ? AND a.id_stato = 5 AND a.is_cancellato = 0
+    GROUP BY categoria;
+    """
+    cursore.execute(sql, (id_utente,))
+    dati = cursore.fetchall()
+    connessione.close()
+    return dati # Ritorna una lista di tuple: [('Elettronica', 5), ('Abiti', 3)]
 
 if __name__ == '__main__':
     db_initialization()

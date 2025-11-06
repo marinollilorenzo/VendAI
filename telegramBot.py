@@ -4,6 +4,10 @@ import re
 import datetime
 from dateutil.parser import isoparse
 from datetime import timedelta
+import matplotlib.pyplot as plt
+import seaborn as sns
+import io
+plt.switch_backend('Agg')
 from telegram import(
     Update,
     InlineKeyboardButton,
@@ -33,7 +37,8 @@ from database import (
     ottieni_piattaforme_attive,
     disattiva_annuncio,
     ottieni_dettagli_annuncio,
-    aggiorna_campo_annuncio
+    aggiorna_campo_annuncio,
+    ottieni_dati_grafico_categorie
 )
 from aiService import ad_text_generator
 
@@ -73,6 +78,7 @@ ELIMINA_ATTESA_SCELTA, ELIMINA_ATTESA_CONFERMA = range(11, 13)
     MODIFICA_ATTESA_NUOVA_DESCRIZIONE,
     MODIFICA_ATTESA_NUOVO_PREZZO
 ) = range(13, 18)
+DETTAGLI_ATTESA_SCELTA = range(18, 19)
 
 T_CREA = "🆕 Crea Annuncio"
 T_LISTA = "🛍️ I Miei Annunci"
@@ -81,15 +87,17 @@ T_ANALISI = "📈 Statistiche"
 T_AIUTO = "❓ Aiuto / Annulla"
 T_ELIMINA = "🗑️ Elimina Annuncio"
 T_MODIFICA = "✏️ Modifica Annuncio"
+T_DETTAGLI = "🔍 Vedi Dettagli"
 
 # --- TASTIERE ---
 def crea_menu_principale() -> ReplyKeyboardMarkup:
     """Crea la tastiera del menu principale."""
     tastiera = [
         [T_CREA],  # Una riga per il pulsante principale
-        [T_LISTA, T_MODIFICA],
-        [T_VENDI, T_ELIMINA],
-        [T_ANALISI, T_AIUTO]
+        [T_LISTA, T_VENDI],
+        [T_MODIFICA, T_ELIMINA],
+        [T_ANALISI, T_DETTAGLI],
+        [T_AIUTO]
     ]
     
     return ReplyKeyboardMarkup(
@@ -971,6 +979,99 @@ async def modifica_fatto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     context.user_data.clear()
     return ConversationHandler.END
 
+# --- DETTAGLI ANNUNCIO ---
+async def dettagli_wizard_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Mostra la lista di annunci per vederne i dettagli."""
+    user = update.message.from_user
+    id_utente_db = get_or_create_user(user.id, user.first_name)
+    
+    # Riusiamo la funzione che prende tutti gli annunci attivi
+    annunci = ottieni_annunci_utente(id_utente_db)
+    
+    if not annunci:
+        await update.message.reply_text("Nessun annuncio trovato.", reply_markup=crea_menu_principale())
+        return ConversationHandler.END
+
+    tastiera = []
+    for annuncio in annunci:
+        callback_data = f"dettagli_{annuncio['id']}"
+        testo = f"🏷️ #{annuncio['id']:04d} - {annuncio['titolo_generato'][:30]}..."
+        tastiera.append([InlineKeyboardButton(testo, callback_data=callback_data)])
+
+    messaggio_inviato = await update.message.reply_text(
+        "Di quale annuncio vuoi vedere i dettagli completi?",
+        reply_markup=InlineKeyboardMarkup(tastiera)
+    )
+    context.user_data['messaggio_con_pulsanti_id'] = messaggio_inviato.message_id
+
+    
+    return DETTAGLI_ATTESA_SCELTA
+
+async def dettagli_mostra(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Mostra la scheda completa dell'annuncio selezionato."""
+    query = update.callback_query
+    await query.answer()
+    
+    id_annuncio = int(query.data.split('_')[1])
+    user = query.from_user
+    id_utente_db = get_or_create_user(user.id, user.first_name)
+    
+    annuncio = ottieni_dettagli_annuncio(id_utente_db, id_annuncio)
+    
+    if not annuncio:
+        await query.edit_message_text("Errore: Annuncio non trovato.")
+        return ConversationHandler.END
+
+    # Formattazione dei dati per la visualizzazione
+    stato = annuncio['nome_stato'].upper() if annuncio['nome_stato'] else "N/D"
+    piattaforma = annuncio['nome_piattaforma'].capitalize() if annuncio['nome_piattaforma'] else "N/D"
+    categoria = annuncio['categoria'].capitalize() if annuncio['categoria'] else "N/D"
+    data_creazione = annuncio['data_creazione'][:16] # Prende solo YYYY-MM-DD HH:MM
+    
+    scheda = (
+        f"📄 SCHEDA ANNUNCIO #{annuncio['id']:04d}\n"
+        f"Stato: {stato}\n"
+        f"Creato il: {data_creazione}\n\n"
+        f"📢 Titolo:\n{annuncio['titolo_generato']}\n\n"
+        f"📝 Descrizione:\n{annuncio['descrizione_generata']}\n\n"
+        f"💰 Prezzo Suggerito: {annuncio['prezzo_suggerito']} €\n"
+        f"🏷️ Categoria: {categoria}\n"
+        f"📱 Piattaforma: {piattaforma}\n"
+    )
+    
+    # Aggiungiamo info extra se ci sono
+    if annuncio['data_pubblicazione']:
+        data_prog = isoparse(annuncio['data_pubblicazione'])
+        data_formattata = data_prog.strftime('%d/%m/%Y alle %H:%M') # Es. 03/11/2025 alle 10:41
+        scheda += f"🗓️ Programmato per: {data_formattata}\n"
+    if annuncio['prezzo_vendita']:
+        scheda += f"🎉 Venduto a: {annuncio['prezzo_vendita']} €\n"
+
+    # Inviamo il messaggio (usiamo Markdown semplice per evitare errori con testi strani)
+    # Aggiungiamo un pulsante "Indietro" per tornare al menu principale
+    tastiera_indietro = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Torna al Menu", callback_data="dettagli_chiudi")]])
+    
+    messaggio_inviato = await query.edit_message_text(
+        scheda,
+        parse_mode=None, 
+        reply_markup=tastiera_indietro
+    ) # parse_mode=None è più sicuro per testi lunghi imprevedibili
+    
+    context.user_data['messaggio_con_pulsanti_id'] = messaggio_inviato.message_id
+    
+    return DETTAGLI_ATTESA_SCELTA # Rimaniamo in attesa per gestire il bottone "Indietro"
+
+async def dettagli_chiudi(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Chiude la visualizzazione dettagli."""
+    query = update.callback_query
+    await query.answer()
+    await query.delete_message() # Cancella la scheda
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text="Ritorno al menu principale.",
+        reply_markup=crea_menu_principale()
+    )
+    return ConversationHandler.END
 
 #HANDLER
 # --- LISTA ANNUNCI ---
@@ -1015,12 +1116,12 @@ async def lista_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         print(f"Errore durante /lista: {e}")
         await update.message.reply_text(f"Si è verificato un errore durante il recupero dei tuoi annunci: {e}")
 
-
 # --- ANALISI ---
 async def analisi_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     print("Ricevuto comando /analisi")
     user = update.message.from_user
     id_utente_db = get_or_create_user(user.id, user.first_name)
+    await update.message.reply_chat_action(action="upload_photo")
     try:
         statistiche = ottieni_statistiche_avanzate(id_utente_db)
 
@@ -1052,9 +1153,21 @@ async def analisi_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         messaggio += "--- **Potenziale Futuro** 🔮 ---\n"
         messaggio += f"•  Valore Stimato Annunci Attivi: **{statistiche['stima_guadagno_futuro']:.2f} €**\n"
         
-        # NOTA: Usiamo 'Markdown' (v1) perché è meno rigido di 'MarkdownV2' 
-        # con i numeri decimali e i simboli. È più sicuro per questo messaggio.
-        await update.message.reply_text(messaggio, parse_mode='Markdown')
+        grafico_buffer = genera_grafico_vendite(id_utente_db)
+
+        # --- 3. Invio (Combinato o Solo Testo) ---
+        if grafico_buffer:
+            # Diamo un nome al file in memoria, così Telegram sa che è un'immagine
+            grafico_buffer.name = "grafico_vendite.png"
+            
+            await update.message.reply_photo(
+                photo=grafico_buffer,
+                caption=messaggio,
+                parse_mode='Markdown'
+            )
+        else:
+            # Se non abbiamo vendite (quindi niente grafico a torta), inviamo solo il testo
+            await update.message.reply_text(messaggio, parse_mode='Markdown')
 
     except Exception as e:
         print(f"Errore durante /analisi: {e}")
@@ -1238,6 +1351,34 @@ def parse_date_regex(text):
     # Fallback/Default: if no pattern matched
     return None
 
+def genera_grafico_vendite(id_utente_db):
+    """
+    Genera un grafico a torta delle vendite in memoria.
+    Usa indici numerici perché la query restituisce tuple.
+    """
+    dati_grafico = ottieni_dati_grafico_categorie(id_utente_db)
+    
+    if not dati_grafico:
+        return None
+
+    # Preparazione dati usando gli indici numerici delle tuple
+    # riga[0] = nome categoria, riga[1] = conteggio
+    categorie = [riga[0] if riga[0] else "Altro" for riga in dati_grafico]
+    valori = [riga[1] for riga in dati_grafico]
+
+    # Creazione Grafico
+    sns.set_theme(style="whitegrid")
+    plt.figure(figsize=(6, 6))
+    plt.pie(valori, labels=categorie, autopct='%1.1f%%', startangle=140, colors=sns.color_palette("pastel"))
+    plt.title('Le tue Vendite per Categoria')
+    
+    # Salvataggio nel buffer in memoria
+    buffer = io.BytesIO()
+    plt.savefig(buffer, format='png', bbox_inches='tight')
+    buffer.seek(0)
+    plt.close()
+    
+    return buffer
 # --- FUNZIONE DI AVVIO ---
 def bot_start():
     """Crea l'applicazione e avvia il bot con il menu principale."""
@@ -1249,7 +1390,8 @@ def bot_start():
             MessageHandler(filters.Text(T_CREA), nuovo_annuncio_handler_testo_guida),
             MessageHandler(filters.Text(T_VENDI), vendi_wizard_start),
             MessageHandler(filters.Text(T_ELIMINA), elimina_wizard_start),
-            MessageHandler(filters.Text(T_MODIFICA), modifica_wizard_start)  
+            MessageHandler(filters.Text(T_MODIFICA), modifica_wizard_start),
+            MessageHandler(filters.Text(T_DETTAGLI), dettagli_wizard_start)
         ],
         states={
             # --- FLUSSO DI CREAZIONE ---
@@ -1330,6 +1472,11 @@ def bot_start():
             MODIFICA_ATTESA_NUOVO_PREZZO: [
                 MessageHandler(filters.Text(T_AIUTO), annulla),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, modifica_ricevi_nuovo_prezzo)
+            ],
+            # --- FLUSSO DI DETTAGLI DI UN ANNUNCIO ---
+            DETTAGLI_ATTESA_SCELTA: [
+                CallbackQueryHandler(dettagli_mostra, pattern=r"^dettagli_\d+$"),
+                CallbackQueryHandler(dettagli_chiudi, pattern="^dettagli_chiudi$")
             ]
         },
         fallbacks=[
