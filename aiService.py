@@ -73,13 +73,14 @@ async def ad_text_generator(product_description, foto_bytes=None):
         - Assicurati che ogni sezione sia sempre presente e rispettata, anche in caso di informazioni mancanti.
         - Adatta il registro linguistico all'ambito commerciale online (es. Subito, eBay, Facebook Marketplace).
     """
-    
+    contents_list = [prompt]
     immagine_caricata_correttamente = False
     if foto_bytes:
         try:
             image = types.Part.from_bytes(
                 data=foto_bytes, mime_type="image/jpeg"
             )
+            contents_list.append(image)
             immagine_caricata_correttamente = True
         except Exception as e:
             print(f"Errore nel caricamento dell'immagine: {e}")
@@ -90,14 +91,15 @@ async def ad_text_generator(product_description, foto_bytes=None):
     
     
     try:
-        response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=[prompt, image],
-                config={
-                    "response_mime_type": "application/json",
-                    "response_schema": output
-                }
-            )
+        response = await asyncio.to_thread(
+            client.models.generate_content,
+            model="gemini-2.5-flash",
+            contents=contents_list,
+            config={
+                "response_mime_type": "application/json",
+                "response_schema": output
+            }
+        )
         if hasattr(response, 'parsed') and response.parsed:
             # response.parsed è già un oggetto OutputSchema (o un dizionario)
             if isinstance(response.parsed, output):
