@@ -1,8 +1,8 @@
-# 🤖 VendiRapido Bot
+# 🤖 VendAI Bot
 
 🇬🇧 [Read this document in English](README.md)
 
-**VendiRapido** è un assistente personale su Telegram progettato per "power seller" che vendono su piattaforme come Vinted, Subito, Wallapop ed eBay.
+**VendAI** è un assistente personale su Telegram progettato per "power seller" che vendono su piattaforme come Vinted, Subito, Wallapop ed eBay.
 
 Automatizza la parte noiosa della vendita: genera titoli e descrizioni accattivanti partendo da una foto grazie all'IA, suggerisce il prezzo, gestisce un inventario privato e ti ricorda quando pubblicare gli annunci per massimizzare la visibilità.
 
@@ -34,8 +34,8 @@ Automatizza la parte noiosa della vendita: genera titoli e descrizioni accattiva
 
 1.  **Clona il repository:**
     ```bash
-    git clone [https://github.com/TUO-USERNAME/VendiRapido.git](https://github.com/TUO-USERNAME/VendiRapido.git)
-    cd VendiRapido
+    git clone [https://github.com/marinollilorenzo/VendAI.git](https://github.com/marinollilorenzo/VendAI.git)
+    cd VendAI
     ```
 
 2.  **Crea e attiva l'ambiente virtuale (raccomandato):**
