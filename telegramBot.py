@@ -167,14 +167,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     id_utente_db = get_or_create_user(user.id, user.first_name)
     
     messaggio_benvenuto = (
-        f"Ciao {user.first_name}, benvenuto nel tuo assistente per le vendite online!\n\n"
-        "Sono il tuo assistente personale per creare e gestire annunci di vendita online.\n\n"
-        "**Cosa posso fare per te:**\n"
-        "1.  Genero titoli e descrizioni **usando l'IA** (analizzando anche le tue foto).\n"
-        "2.  **Programmo** i tuoi annunci all'ora che preferisci.\n"
-        "3.  Ti **notifico** 30 minuti prima e all'ora X.\n"
-        "4.  Tengo traccia di tutti i tuoi annunci e delle tue **statistiche di vendita**.\n\n"
-        "Usa i pulsanti del menu qui sotto per iniziare! 👇"
+        f"Ciao {user.first_name}, benvenuto su **SellMate AI**! 🤖✨\n\n"
+        "Sono il tuo assistente intelligente per vendere online. Ti aiuto a trasformare le tue foto in contanti, risparmiando tempo.\n\n"
+        "🚀 **COSA POSSO FARE PER TE:**\n\n"
+        "📸 **Creazione Magica con IA**\n"
+        "Inviami una foto: genererò automaticamente titolo, descrizione ottimizzata e ti suggerirò il prezzo migliore.\n\n"
+        "✏️ **Controllo Totale**\n"
+        "Prima di salvare, puoi modificare ogni dettaglio (titolo, prezzo, descrizione) con un comodo menu interattivo.\n\n"
+        "📅 **Programmazione Smart**\n"
+        "Decidi tu quando pubblicare. Io ti invierò una notifica 30 minuti prima e all'ora esatta, con il testo già pronto da incollare.\n\n"
+        "🗂️ **Gestione Inventario**\n"
+        "Tieni traccia di tutti i tuoi oggetti. Segnali come 'Venduti' per calcolare i tuoi guadagni reali.\n\n"
+        "📊 **Dashboard Finanziaria**\n"
+        "Visualizza grafici e statistiche dettagliate sulle tue performance di vendita e sui tuoi profitti.\n\n"
+        "👇 **Usa il menu qui sotto per iniziare!**"
     )
     
     await update.message.reply_text(
