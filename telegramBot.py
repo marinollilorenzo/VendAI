@@ -167,7 +167,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     id_utente_db = get_or_create_user(user.id, user.first_name)
     
     messaggio_benvenuto = (
-        f"Ciao {user.first_name}, benvenuto su **SellMate AI**! 🤖✨\n\n"
+        f"Ciao {user.first_name}, benvenuto su **VendiRapido**! 🤖✨\n\n"
         "Sono il tuo assistente intelligente per vendere online. Ti aiuto a trasformare le tue foto in contanti, risparmiando tempo.\n\n"
         "🚀 **COSA POSSO FARE PER TE:**\n\n"
         "📸 **Creazione Magica con IA**\n"
