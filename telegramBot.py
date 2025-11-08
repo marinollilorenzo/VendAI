@@ -38,7 +38,8 @@ from database import (
     disattiva_annuncio,
     ottieni_dettagli_annuncio,
     aggiorna_campo_annuncio,
-    ottieni_dati_grafico_categorie
+    ottieni_dati_grafico_categorie,
+    completa_annuncio_senza_data
 )
 from aiService import ad_text_generator
 
@@ -519,10 +520,16 @@ async def ricevi_piattaforma(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Modifichiamo il messaggio e chiediamo la data
     await query.edit_message_text(text=f"✅ Piattaforma scelta!")
 
-    await context.bot.send_message(
+    tastiera_salta = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⏭️ Non programmare (Salva in bozza)", callback_data="skip_data")]
+    ])
+    
+    messaggio_inviato = await context.bot.send_message(
         chat_id=query.message.chat_id,
-        text="Scrivimi una data e un'ora per la programmazione (es: 'domani alle 15:00')."
+        text="Scrivimi una data e un'ora per la programmazione (es: 'domani alle 15:00').",
+        reply_markup=tastiera_salta
     )
+    context.user_data['messaggio_con_pulsanti_id'] = messaggio_inviato.message_id
 
     # Passiamo allo stato CREA_ATTESA_DATA
     return CREA_ATTESA_DATA
@@ -563,6 +570,40 @@ async def ricevi_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     context.user_data.clear()
     return ConversationHandler.END
 
+async def ricevi_data_skip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    L'utente ha premuto 'Salta programmazione'. Salva in bozza ed esce.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    # Recuperiamo i dati
+    id_annuncio = context.user_data.get('id_annuncio_corrente')
+    id_categoria = context.user_data.get('id_categoria_scelta')
+    id_piattaforma = context.user_data.get('id_piattaforma_scelta')
+    user = query.from_user
+    id_utente_db = get_or_create_user(user.id, user.first_name)
+
+    if not id_annuncio or not id_categoria or not id_piattaforma:
+        await query.edit_message_text("Errore: dati persi. Riprova.", reply_markup=crea_menu_principale())
+        return ConversationHandler.END
+
+    # Salviamo senza data (rimane in bozza)
+    completa_annuncio_senza_data(id_utente_db, id_annuncio, id_categoria, id_piattaforma)
+    
+    await query.edit_message_text(
+        text=f"💾 Annuncio **\\#{id_annuncio:04d}** salvato in **Bozza**\\!",
+        parse_mode='MarkdownV2'
+    )
+    # Rimostriamo il menu principale
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text="Cosa vuoi fare ora?",
+        reply_markup=crea_menu_principale()
+    )
+    
+    context.user_data.clear()
+    return ConversationHandler.END
 
 # --- SEGNA VENDUTO ---  
 async def vendi_wizard_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1383,7 +1424,7 @@ def genera_grafico_vendite(id_utente_db):
     
     return buffer
 # --- FUNZIONE DI AVVIO ---
-def bot_start():
+def setup_bot_application(token: str) -> Application:
     """Crea l'applicazione e avvia il bot con il menu principale."""
     application = Application.builder().token(TOKEN).build()
 
@@ -1432,6 +1473,7 @@ def bot_start():
                 CallbackQueryHandler(ricevi_piattaforma, pattern="^piat_")
             ],
             CREA_ATTESA_DATA: [
+                CallbackQueryHandler(ricevi_data_skip, pattern="^skip_data$"),
                 MessageHandler(filters.Text(T_AIUTO), annulla),
                 MessageHandler(filters.Text([T_LISTA, T_ANALISI, T_VENDI, T_CREA]), gestisci_testo_sconosciuto_in_conversazione),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, ricevi_data)
@@ -1502,6 +1544,4 @@ def bot_start():
     application.add_handler(MessageHandler(filters.Text(T_ANALISI), analisi_handler))
     application.add_handler(MessageHandler(filters.Text(T_AIUTO), aiuto_annulla_globale))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, gestisci_testo_sconosciuto))
-
-    print("Bot avviato e in ascolto...")
-    application.run_polling()
+    return application

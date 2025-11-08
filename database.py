@@ -162,6 +162,34 @@ def add_annuncement(id_utente, descrizione_input, titolo_generato, descrizione_g
     connection.close()
     return nuovo_id
 
+def completa_annuncio_senza_data(id_utente, id_annuncio, id_categoria, id_piattaforma):
+    """
+    Salva categoria e piattaforma, ma lascia l'annuncio in stato 'bozza' (1)
+    e senza data di pubblicazione.
+    """
+    connessione = sqlite3.connect('annunci.db')
+    cursore = connessione.cursor()
+
+    # Lasciamo id_stato = 1 (bozza)
+    sql_aggiorna = """
+    UPDATE annuncio
+    SET 
+        id_categoria = ?,
+        id_piattaforma = ?,
+        data_pubblicazione = NULL
+    WHERE id = ? AND id_utente = ?;
+    """
+    
+    try:
+        cursore.execute(sql_aggiorna, (id_categoria, id_piattaforma, id_annuncio, id_utente))
+        connessione.commit()
+        connessione.close()
+        return True
+    except Exception as e:
+        print(f"Errore in completa_annuncio_senza_data: {e}")
+        connessione.close()
+        return False
+    
 def aggiorna_annuncio_con_programmazione(id_annuncio, id_categoria, id_piattaforma, data_pubblicazione):
     """
     Aggiorna un annuncio esistente con la categoria scelta e la data di programmazione.
