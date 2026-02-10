@@ -1,0 +1,99 @@
+Tables database:
+
+platform:
+    id_platform,
+    name;
+
+category:
+    id_category,
+    name;
+
+status_type:
+    id_status_type,
+    name;
+
+account_type:
+    id_account_type,
+    name,
+    monthly_credits,
+    price_euro;
+
+file_type:
+    id_file_type,
+    name;
+
+ai_provider:
+    id_ai_provider,
+    name;
+
+prompt:
+    id_prompt;
+    name,
+    version,
+    testo;
+
+payment_provider:
+    id_payment_provider,
+    name;
+
+model:
+    id_model,
+    name,
+    id_ai_provider;
+
+user:
+    id_telegram_user,
+    username,
+    fullname,
+    join_datetime,
+    last_active_datetime,
+    stripe_customer_id;
+
+ad:
+    id_ad,
+    input_description,
+    generated_title,
+    generated_description,
+    generated_hashtags,
+    suggested_price,
+    created_datetime,
+    id_category,
+    id_telegram_user
+    id_model,
+    id_prompt;
+
+multimedia_file:
+    id_multimedia_file,
+    file_order,
+    telegram_file_id,
+    id_file_type,
+    id_ad;
+
+publication_ad:
+    id_publication_ad,
+    scheduled_datetime,
+    publication_datetime,
+    sold_price,
+    sold_datetime,
+    deleted_datetime,
+    ad_url,
+    id_status_type,
+    id_ad,
+    id_platform;
+
+transaction:
+    id_transaction,
+    description,
+    payment_euro,
+    payment_datetime,
+    provider_transaction_id,
+    id_payment_provider;
+
+subscription:
+    id_subscription,
+    subscription_start_datetime,
+    subscription_end_datetime,
+    credits_balance,
+    id_telegram_user,
+    id_account_type
+    id_transaction;
