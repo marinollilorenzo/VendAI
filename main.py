@@ -4,7 +4,7 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from database import DatabaseManager
 import keyboards as kb
-from config.py import BOT_TOKEN
+from config import BOT_TOKEN
 
 
 # Configurazione Logging
