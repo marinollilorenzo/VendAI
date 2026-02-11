@@ -2,3 +2,4 @@ venv/
 .env
 annunci.db
 .DS_Store
+test_db.py
