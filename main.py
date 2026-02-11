@@ -4,19 +4,18 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from database import DatabaseManager
 import keyboards as kb
+from config.py import BOT_TOKEN
+
 
 # Configurazione Logging
 logging.basicConfig(level=logging.INFO)
-
-# Inserisci il tuo Token o caricalo da .env
-TOKEN = "IL_TUO_TELEGRAM_TOKEN"
 
 async def main():
     # Inizializziamo il Database Manager
     db = DatabaseManager()
     
     # Inizializziamo Bot e Dispatcher
-    bot = Bot(token=TOKEN)
+    bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
 
     # --- HANDLERS DI TEST NAVIGAZIONE ---
