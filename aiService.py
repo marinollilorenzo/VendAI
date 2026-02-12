@@ -70,7 +70,7 @@ async def ad_text_generator(product_description: str, foto_bytes: bytes = None) 
     try:
         # Native async call with structured output (Pydantic)
         response = await client.aio.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-2.5-flash',
             contents=contents,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
