@@ -26,45 +26,31 @@ def get_main_menu() -> ReplyKeyboardMarkup:
         KeyboardButton(text="❓ Aiuto")
     )
     return builder.as_markup(resize_keyboard=True)
-
-def get_ad_manage_kb(ad_id: int, status: str) -> InlineKeyboardMarkup:
+def get_ad_manage_kb(ad_id: int, status: str):
     """
-    Builds an inline keyboard for managing a specific ad.
-    The layout is contextual, grouping buttons logically and hiding non-applicable actions.
+    Generates the management keyboard for an ad.
+    If the ad is SOLD, strictly limits options to 'Details' only.
     """
     builder = InlineKeyboardBuilder()
     
-    # Core actions
+    # 1. Tasto Dettagli (Sempre visibile)
     builder.button(text="ℹ️ Dettagli", callback_data=f"view_details:{ad_id}")
-    builder.button(text="✏️ Modifica", callback_data=f"edit_ad:{ad_id}")
-    
-    # Status-dependent actions
-    # 'Bozza' is the Italian for 'DRAFT' used in the handler
-    if status in ['Bozza', 'DRAFT']:
-        builder.button(text="📅 Pubblica", callback_data=f"publish_ad:{ad_id}")
-    
+
+    # 2. Tasti Azione (Solo se NON è venduto)
     if status != 'SOLD':
-        # This now uses the correct callback data to trigger the existing FSM
-        # We can also add a direct shortcut "sell_ad:{ad_id}" if we implement that handler, 
-        # but reusing sell_select:{ad_id} is fine if the wizard handles direct ID input.
-        # handlers.py has `sell_select:{ad_id}` which leads to `sell_ad_ask_price`.
-        # However, `sell_ad_ask_price` expects `AdSelling.WAITING_AD_SELECTION` state or direct flow?
-        # Let's check handlers.py: `sell_ad_ask_price` triggers on `sell_select:`.
-        # It transitions to `WAITING_PRICE`.
-        # BUT `start_sell_ad_wizard` sets `WAITING_AD_SELECTION`.
-        # If we click this button from "My Ads" (state=None), the handler `sell_ad_ask_price` needs to work.
-        # `sell_ad_ask_price` is decorated with `AdSelling.WAITING_AD_SELECTION`.
-        # So we might need a separate callback or adjust the handler filter to allow None state.
-        # Let's use a new callback `sell_ad:{ad_id}` which we added in handlers.py.
+        builder.button(text="✏️ Modifica", callback_data=f"edit_ad:{ad_id}")
         builder.button(text="✅ Segna Venduto", callback_data=f"sell_ad:{ad_id}")
-
-    # Destructive action is always available
-    builder.button(text="🗑️ Elimina", callback_data=f"delete_ad:{ad_id}")
+        builder.button(text="🗑️ Elimina", callback_data=f"delete_ad:{ad_id}")
     
-    # Adjust layout for a clean 2-column grid
-    builder.adjust(2)
+    # Layout: 
+    # Se SOLD: [Dettagli] (1 per riga)
+    # Se ATTIVO: [Dettagli, Modifica], [Vendi, Elimina] (2 per riga)
+    if status == 'SOLD':
+        builder.adjust(1)
+    else:
+        builder.adjust(2, 2)
+        
     return builder.as_markup()
-
 def get_edit_menu_kb(ad_id: int) -> InlineKeyboardMarkup:
     """
     Builds an inline keyboard for editing the specific fields of an ad.

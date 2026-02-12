@@ -246,31 +246,39 @@ class DatabaseManager:
             logger.info(f"Ad {id_ad} not found for user {id_telegram_user}.")
         return result
 
-    async def get_user_ads(self, id_telegram_user: int, limit: int = 10, offset: int = 0):
+    async def get_user_ads(self, id_telegram_user: int, limit: int = 20):
         """
-        Retrieves a paginated list of advertisements for a specific user,
-        ordered by creation date. Includes details from the latest publication if available.
-        Excludes ads that are marked as DELETED.
+        Retrieves a list of ads for a user, custom ordered by status priority:
+        1. Active/Pending (SCHEDULED, DRAFT, READY)
+        2. Published (PUBLISHED)
+        3. Sold (SOLD)
+        4. Others
         """
         query = """
         SELECT
-            a.id_ad, a.generated_title, a.created_datetime,
-            st.name AS status_name,
-            pa.scheduled_datetime, pa.publication_datetime, pa.deleted_datetime
+            a.id_ad, a.generated_title,
+            pa.id_publication_ad, st.name AS status_name
         FROM ad AS a
         LEFT JOIN (
             SELECT *,
                    ROW_NUMBER() OVER(PARTITION BY id_ad ORDER BY scheduled_datetime DESC, id_publication_ad DESC) as rn
             FROM publication_ad
+            WHERE deleted_datetime IS NULL -- Exclude deleted publications from the join
         ) AS pa ON a.id_ad = pa.id_ad AND pa.rn = 1
         LEFT JOIN status_type AS st ON pa.id_status_type = st.id_status_type
         WHERE a.id_telegram_user = ?
         AND (st.name != 'DELETED' OR st.name IS NULL)
-        ORDER BY a.created_datetime DESC
-        LIMIT ? OFFSET ?
+        ORDER BY
+            CASE 
+                WHEN st.name IN ('SCHEDULED', 'DRAFT', 'READY') THEN 1
+                WHEN st.name = 'PUBLISHED' THEN 2
+                WHEN st.name = 'SOLD' THEN 3
+                ELSE 4
+            END ASC,
+            a.created_datetime DESC
+        LIMIT ?
         """
-        results = await self._fetch_all(query, (id_telegram_user, limit, offset))
-        logger.info(f"Fetched {len(results)} ads for user {id_telegram_user}.")
+        results = await self._fetch_all(query, (id_telegram_user, limit))
         return results
 
     async def get_ad_publications(self, id_ad: int):
