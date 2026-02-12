@@ -1,46 +1,60 @@
 import asyncio
+import logging
 import os
-from dotenv import load_dotenv
-from telegram.ext import Application
+from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.memory import MemoryStorage
 
-# Importiamo la funzione che configura l'applicazione
-from old_test.telegramBot import setup_bot_application
-# Importiamo il loop del notifier
+# --- IMPORT MODULI PERSONALI ---
+from config import config  # <--- Importiamo la config
+from database import DatabaseManager
+from handlers import router as main_router
 from notifier import main_loop as notifier_loop
-# Importiamo l'inizializzazione DB
-from database import db_initialization
-load_dotenv()
-TOKEN = os.getenv("TOKEN")
+
+# Configurazione Logging
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("VendAI_Runner")
+
 async def main():
-    # 1. Inizializza DB
-    db_initialization()
+    # 1. CONTROLLO PRESENZA DATABASE
+    if not os.path.exists(config.DB_PATH):
+        logger.critical(f"❌ DATABASE NON TROVATO: '{config.DB_PATH}' non esiste.")
+        logger.critical("⚠️  Esegui prima 'python3 init_db.py'!")
+        return
+
+    # 2. Inizializzazione Database Manager (Test connessione opzionale)
+    db = DatabaseManager()
+    logger.info(f"✅ Database '{config.DB_PATH}' rilevato.")
+
+    # 3. Configurazione Bot (Aiogram)
+    # Usiamo il token dalla config
+    bot = Bot(token=config.BOT_TOKEN)
+    dp = Dispatcher(storage=MemoryStorage())
     
-    # 2. Costruisci il bot usando la funzione dal modulo telegram_bot
-    application = setup_bot_application(TOKEN) # Passiamo il token
-    
-    # 3. Avvia i due task in parallelo
-    print("🚀 Avvio di VendAI (Bot + Notifier insieme)...")
-    
-    # Task 1: Il bot Telegram
-    await application.initialize()
-    await application.start()
-    await application.updater.start_polling()
-    
-    # Task 2: Il guardiano delle notifiche
-    notifier_task = asyncio.create_task(notifier_loop())
-    
-    print("✅ Tutto attivo! Premi Ctrl+C per fermare.")
-    
-    # Mantiene vivo il programma principale finché uno dei due non termina
+    dp.include_router(main_router)
+
+    # 4. Avvio Parallelo
+    logger.info("🚀 Avvio del sistema VendAI Completo...")
+
+    await bot.delete_webhook(drop_pending_updates=True)
+
+    bot_task = asyncio.create_task(dp.start_polling(bot))
+    notify_task = asyncio.create_task(notifier_loop())
+
+    logger.info("✅ Bot e Notifier sono attivi.")
+
     try:
-        await asyncio.gather(notifier_task) # Aspettiamo solo il notifier_task (il bot gestisce il suo loop)
-    except KeyboardInterrupt:
-        print("Spegnimento in corso...")
+        await asyncio.gather(bot_task, notify_task)
+    except Exception as e:
+        logger.error(f"Errore critico: {e}")
     finally:
-        # Pulizia corretta quando si spegne
-        await application.updater.stop()
-        await application.stop()
-        await application.shutdown()
+        await bot.session.close()
+        logger.info("🛑 Sistema spento.")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("👋 Chiusura manuale.")

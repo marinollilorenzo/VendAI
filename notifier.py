@@ -1,10 +1,9 @@
 import asyncio
 import logging
-import os
 from datetime import datetime, timedelta
-from dotenv import load_dotenv
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from config import config
 
 # Riutilizziamo il tuo DatabaseManager esistente
 from database import DatabaseManager
@@ -14,8 +13,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger("Notifier")
 
 # Carica variabili d'ambiente
-load_dotenv()
-TOKEN = os.getenv("BOT_TOKEN") 
+TOKEN = config.BOT_TOKEN
 
 if not TOKEN:
     logger.error("❌ TOKEN non trovato nel file .env!")

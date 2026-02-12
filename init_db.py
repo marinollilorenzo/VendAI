@@ -1,7 +1,8 @@
 import sqlite3
 import os
+from config import config
 
-DB_NAME = "annunci.db"
+DB_NAME = config.DB_PATH
 
 def init_db():
     # Controllo di sicurezza: se il DB esiste, chiede conferma prima di cancellarlo
@@ -195,7 +196,7 @@ def init_db():
     cursor.executemany("INSERT OR IGNORE INTO file_type (name) VALUES (?)", [('photo',), ('video',)])
     cursor.executemany("INSERT OR IGNORE INTO platform (name) VALUES (?)", [('Vinted',), ('Subito',), ('eBay',), ('Depop',), ('Wallapop',), ('Facebook Marketplace',)])
     cursor.executemany("INSERT OR IGNORE INTO category (name) VALUES (?)", [('Abbigliamento',), ('Scarpe',), ('Elettronica',), ('Casa',), ('Accessori',), ('Altro',)])
-    cursor.executemany("INSERT OR IGNORE INTO status_type (name) VALUES (?)", [('DRAFT',), ('READY',), ('SCHEDULED',), ('PUBLISHED',), ('FAILED',), ('SOLD',), ('DELETED',), ('SOLD_OTHER_PLATFORM',), ('NOTIFIED_PRE',)])
+    cursor.executemany("INSERT OR IGNORE INTO status_type (name) VALUES (?)", [('DRAFT',), ('READY',), ('SCHEDULED',), ('PUBLISHED',), ('FAILED',), ('SOLD',), ('DELETED',), ('SOLD_OTHER_PLATFORM',), ('NOTIFIED_PRE',), ('NOTIFIED_FINAL',)])
     cursor.executemany("INSERT OR IGNORE INTO payment_provider (name) VALUES (?)", [('Stripe',), ('Telegram Stars',), ('PayPal',)])
     
     # Setup AI

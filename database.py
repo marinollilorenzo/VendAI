@@ -1,6 +1,7 @@
 import aiosqlite
 from datetime import datetime, timedelta
 import logging
+from config import config
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -12,12 +13,12 @@ class DatabaseManager:
     Provides asynchronous methods for interacting with the SQLite database.
     Ensures a single database connection per instance and handles error logging.
     """
-    def __init__(self, db_path="annunci.db"):
+    def __init__(self):
         """
         Initializes the DatabaseManager with the path to the SQLite database.
         The database connection is established lazily upon the first query.
         """
-        self.db_path = db_path
+        self.db_path = config.DB_PATH
         self.conn = None # Initialize connection to None
 
     async def _get_connection(self):
