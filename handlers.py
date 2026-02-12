@@ -39,8 +39,8 @@ class AdEditing(StatesGroup):
 
 class AdSelling(StatesGroup):
     WAITING_AD_SELECTION = State()
+    WAITING_PLATFORM = State()
     WAITING_PRICE = State()
-
 class AdDeleting(StatesGroup):
     WAITING_CONFIRMATION = State()
 
@@ -123,8 +123,7 @@ async def global_menu_handler(message: Message, state: FSMContext):
         logging.info(f"Cancelling state {current_state} due to menu navigation.")
         await state.clear()
         # Feedback visivo
-        await message.answer("🔄", reply_markup=kb.get_main_menu())
-        # (Opzionale: cancellare subito il messaggio "🔄" per pulizia estrema)
+        await message.answer("", reply_markup=kb.get_main_menu())
 
     # Route to the correct handler - ASSICURATI DI PASSARE 'state' A TUTTI
     if message.text == "🆕 Crea Annuncio":
@@ -458,7 +457,7 @@ async def my_ads_handler(message: Message, state: FSMContext = None):
         await clear_previous_ads_messages(state, bot, chat_id)
     
     # 2. Query Database (ordinata con priorità)
-    user_ads = await db.get_user_ads(user_id, limit=20)
+    user_ads = await db.get_user_ads(user_id, limit=10)
     user_ads = [ad for ad in user_ads if ad.get('status_name') != 'DELETED']
 
     if not user_ads:
@@ -621,7 +620,7 @@ async def edit_ad_finish(callback: CallbackQuery, state: FSMContext):
 
     # 3. Recupero Dati Utente
     user_id = callback.from_user.id
-    user_ads = await db.get_user_ads(user_id, limit=20)
+    user_ads = await db.get_user_ads(user_id, limit=10)
     user_ads = [ad for ad in user_ads if ad.get('status_name') != 'DELETED']
 
     if not user_ads:
@@ -654,69 +653,109 @@ async def edit_ad_finish(callback: CallbackQuery, state: FSMContext):
     # 5. Aggiorniamo lo stato con i nuovi ID per poterli cancellare in futuro
     await state.update_data(ad_message_ids=new_msg_ids)
     
-# Aggiungi questo PRIMA o DOPO gli altri handler di vendita
 @router.callback_query(F.data.startswith("sell_ad:"))
 async def sell_ad_inline_start(callback: CallbackQuery, state: FSMContext):
-    """
-    Gestisce il click su 'Segna Venduto' direttamente dalla lista o dai dettagli.
-    Salta la selezione dell'annuncio e chiede subito il prezzo.
-    """
     ad_id = int(callback.data.split(":")[1])
-    
-    # Recuperiamo l'ultima pubblicazione valida
-    pub_id = await db.get_latest_publication_id_for_ad(ad_id)
-    
-    if not pub_id:
-        await callback.answer("⚠️ Errore: Annuncio mai pubblicato o già venduto.", show_alert=True)
-        return
+    await state.update_data(ad_id_to_sell=ad_id)
 
-    await state.update_data(pub_id_to_sell=pub_id)
-    await callback.message.edit_text(
-        f"💰 A che prezzo hai venduto l'annuncio #{ad_id}?\n\nScrivi la cifra (es. 25.00):",
-        reply_markup=None # O metti un tasto annulla
-    )
-    await state.set_state(AdSelling.WAITING_PRICE)
-    await callback.answer()
+    # 1. Recuperiamo le piattaforme attive per questo annuncio
+    active_platforms = await db.get_ad_active_platforms(ad_id)
     
-# --- 4. Mark as Sold FSM ---
-@router.message(F.text == "✅ Segna Venduto", StateFilter(None))
-async def start_sell_ad_wizard(message: Message, state: FSMContext):
-    ads = await db.get_non_sold_ads(message.from_user.id)
-    if not ads:
-        await message.answer("Nessun annuncio attivo da segnare come venduto.")
-        return
+    # 2. Costruiamo la tastiera di scelta
     builder = InlineKeyboardBuilder()
-    for ad in ads:
-        builder.button(text=f"#{ad['id_ad']} - {ad['generated_title']}", callback_data=f"sell_select:{ad['id_ad']}")
-    builder.adjust(1)
-    await message.answer("Quale annuncio hai venduto?", reply_markup=builder.as_markup())
-    await state.set_state(AdSelling.WAITING_AD_SELECTION)
+    
+    # Aggiungiamo un bottone per ogni piattaforma attiva
+    for p in active_platforms:
+        builder.button(text=f"🌐 {p['name']}", callback_data=f"sold_on:{p['id_platform']}")
+    
+    # Aggiungiamo sempre l'opzione "Privatamente / Altro"
+    builder.button(text="🤝 Privatamente / Altro", callback_data="sold_on:0")
+    
+    builder.adjust(1) # Una per riga per chiarezza
 
-@router.callback_query(AdSelling.WAITING_AD_SELECTION, F.data.startswith("sell_select:"))
-async def sell_ad_ask_price(callback: CallbackQuery, state: FSMContext):
-    ad_id = int(callback.data.split(":")[1])
-    pub_id = await db.get_latest_publication_id_for_ad(ad_id)
-    if not pub_id:
-        await callback.message.edit_text("Errore: Impossibile segnare come venduto un annuncio che non è mai stato pubblicato/schedulato.", reply_markup=None)
-        await state.clear()
-        return
-    await state.update_data(pub_id_to_sell=pub_id)
-    await callback.message.edit_text(f"A che prezzo hai venduto l'annuncio #{ad_id}?")
+    # 3. Pulizia chat (Focus Mode)
+    await clear_previous_ads_messages(state, callback.bot, callback.message.chat.id, keep_message_id=callback.message.message_id)
+
+    await callback.message.edit_text(
+        f"🎉 Ottimo! Dove hai venduto l'annuncio #{ad_id}?",
+        reply_markup=builder.as_markup()
+    )
+    await state.set_state(AdSelling.WAITING_PLATFORM)
+    await callback.answer()
+
+
+@router.callback_query(AdSelling.WAITING_PLATFORM, F.data.startswith("sold_on:"))
+async def sell_ad_platform_selected(callback: CallbackQuery, state: FSMContext):
+    # 1. Estraiamo l'ID della piattaforma dal bottone premuto
+    platform_id = int(callback.data.split(":")[1])
+    await state.update_data(sold_platform_id=platform_id)
+    
+    # 2. Recuperiamo il nome "Bello" per il messaggio
+    # Default: Se l'ID è 0 o nullo, assumiamo sia una vendita privata
+    display_text = "Privatamente" 
+
+    if platform_id > 0:
+        try:
+            # Facciamo una query rapida per ottenere il nome (es. "Vinted", "Wallapop")
+            # Nota: Usiamo _fetch_one che è disponibile nella tua classe DatabaseManager
+            query = "SELECT name FROM platform WHERE id_platform = ?"
+            result = await db._fetch_one(query, (platform_id,))
+            
+            if result:
+                # Costruiamo la frase: "su Vinted"
+                display_text = f"su {result['name']}"
+            else:
+                display_text = "sulla piattaforma" # Fallback se non trova il nome
+        except Exception:
+            display_text = "sulla piattaforma"
+
+    # 3. Modifichiamo il messaggio chiedendo il prezzo
+    await callback.message.edit_text(
+        f"💰 A che prezzo l'hai venduto **{display_text}**?\n\n"
+        "Scrivi la cifra (es. 25.00):",
+        reply_markup=None,
+        parse_mode="Markdown"
+    )
+    
+    # Passiamo allo stato di attesa prezzo
     await state.set_state(AdSelling.WAITING_PRICE)
     await callback.answer()
 
 @router.message(AdSelling.WAITING_PRICE, F.text)
 async def sell_ad_save(message: Message, state: FSMContext):
     try:
-        price = float(message.text.replace(',', '.'))
+        # Pulizia input prezzo
+        price_text = message.text.replace(',', '.').replace('€', '').strip()
+        price = float(price_text)
+        
         data = await state.get_data()
-        await db.mark_publication_as_sold(data['pub_id_to_sell'], price)
-        await message.answer(f"🎉 Congratulazioni! Annuncio segnato come venduto a {price}€.")
-    except (ValueError, KeyError):
-        await message.answer("Prezzo non valido. Inserisci solo un numero.")
-        return
-    finally:
-        await state.clear()
+        ad_id = data['ad_id_to_sell']
+        platform_id = data['sold_platform_id']
+        
+        # CHIAMATA AL DB AGGIORNATA
+        await db.finalize_sale(ad_id, platform_id, price)
+        
+        # Feedback finale e pulizia
+        # Recuperiamo il messaggio del menu (che era editato per chiedere il prezzo) e lo eliminiamo o aggiorniamo
+        # Se vogliamo pulizia totale:
+        await clear_previous_ads_messages(state, message.bot, message.chat.id)
+        
+        await message.answer(
+            f"✅ **Vendita Registrata!**\n"
+            f"Annuncio #{ad_id} segnato come VENDUTO a {price:.2f}€.\n"
+            "Le altre pubblicazioni sono state chiuse automaticamente.",
+            reply_markup=kb.get_main_menu(), # O torna alla lista annunci
+            parse_mode="Markdown"
+        )
+        
+    except ValueError:
+        await message.answer("⚠️ Prezzo non valido. Scrivi solo il numero (es. 10.50).")
+        return # Rimaniamo nello stato WAITING_PRICE
+    except Exception as e:
+        logging.error(f"Errore salvataggio vendita: {e}")
+        await message.answer("❌ Errore nel database.")
+    
+    await state.clear()
 
 # --- 5. Delete Ad FSM ---
 @router.callback_query(F.data.startswith("delete_ad:"))
@@ -886,20 +925,28 @@ async def view_ad_details_handler(callback: CallbackQuery, state: FSMContext):
 async def copy_ad_data_handler(callback: CallbackQuery, state: FSMContext):
     """
     Recupera la prossima piattaforma programmata, invia i dati separati 
-    e pulisce tutti gli altri messaggi degli annunci.
+    e pulisce tutti gli altri messaggi.
     """
+    # 1. RISPONDIAMO SUBITO PER EVITARE TIMEOUT
+    # Usiamo un try/except perché se l'utente clicca su un messaggio vecchio,
+    # non vogliamo che il bot si blocchi solo perché non può fare l'animazione.
+    try:
+        await callback.answer("⏳ Recupero dati...")
+    except Exception:
+        pass 
+
     ad_id = int(callback.data.split(":")[1])
     user_id = callback.from_user.id
     
     try:
-        # 1. Recupero dettagli base dell'annuncio
+        # 2. Recupero dettagli base
         ad = await db.get_ad_details(ad_id, user_id)
         if not ad:
-            await callback.answer("❌ Errore: Annuncio non trovato.", show_alert=True)
+            # Qui usiamo message.answer perché il callback potrebbe essere scaduto
+            await callback.message.answer("❌ Errore: Annuncio non trovato.")
             return
 
-        # 2. Query per trovare la piattaforma con la data futura più vicina
-        # Cerchiamo in publication_ad una data > ora attuale, ordinata per la più recente
+        # 3. Query Prossima Piattaforma
         query_next_pub = """
             SELECT p.name as platform_name, pa.scheduled_datetime
             FROM publication_ad pa
@@ -910,50 +957,51 @@ async def copy_ad_data_handler(callback: CallbackQuery, state: FSMContext):
             ORDER BY pa.scheduled_datetime ASC
             LIMIT 1
         """
-        # Utilizziamo il metodo privato _fetch_one del DatabaseManager per la query custom
         next_pub = await db._fetch_one(query_next_pub, (ad_id,))
-
-        # Prepariamo le info della piattaforma
+        
         if next_pub:
-            dt_obj = datetime.strptime(next_pub['scheduled_datetime'], '%Y-%m-%d %H:%M:%S')
-            info_pub = f"{next_pub['platform_name']} ({dt_obj.strftime('%d/%m %H:%M')})"
+            # Conversione sicura della data
+            try:
+                dt_obj = datetime.strptime(next_pub['scheduled_datetime'], '%Y-%m-%d %H:%M:%S')
+                info_pub = f"🌐 {next_pub['platform_name']} ({dt_obj.strftime('%d/%m %H:%M')})"
+            except ValueError:
+                info_pub = f"🌐 {next_pub['platform_name']}"
         else:
             info_pub = "🌐 Nessuna prox. pubblicazione"
 
-        # 3. PULIZIA TOTALE: Eliminiamo tutti gli altri messaggi degli annunci dalla chat
-        # Teniamo solo il messaggio dell'annuncio su cui l'utente ha cliccato
+        # 4. PULIZIA TOTALE
+        # Nota: keep_message_id=None cancella TUTTO, incluso il menu da cui hai cliccato.
+        # Se vuoi tenere il menu, rimetti: keep_message_id=callback.message.message_id
         await clear_previous_ads_messages(
             state, 
             callback.bot, 
             callback.message.chat.id, 
-            keep_message_id=callback.message.message_id
+            keep_message_id=callback.message.message_id 
         )
 
-        # 4. Estrazione dati per Vinted
+        # 5. Dati
         titolo = ad.get('generated_title', 'N/D')
         descrizione = ad.get('generated_description', 'N/D')
         prezzo = f"{ad.get('suggested_price', 0.0):.2f}".replace(',', '.')
         categoria = ad.get('category_name', 'Generica')
 
-        # 5. INVIO SEQUENZA MESSAGGI PULITI
-        # Messaggio 1: Header con categoria e info piattaforma programmata
+        # 6. INVIO MESSAGGI
         await callback.message.answer(
             f"📋 **Copia Rapida ID #{ad_id}**\n"
-            f"📂 Cat: {categoria} \nPiattaforma: {info_pub}\nDi seguito titolo, descrizione, prezzo:\n"
+            f"📂 Cat: {categoria} | {info_pub}\n"
+            "───────────────"
         )
         await asyncio.sleep(0.1)
-        
-        await callback.message.answer(titolo)       # Messaggio 2: Titolo
+        await callback.message.answer(titolo)
         await asyncio.sleep(0.1)
-        await callback.message.answer(descrizione)  # Messaggio 3: Descrizione
+        await callback.message.answer(descrizione)
         await asyncio.sleep(0.1)
-        await callback.message.answer(prezzo)       # Messaggio 4: Prezzo (solo cifre)
-        
-        await callback.answer("✅ Dati pronti!")
+        await callback.message.answer(prezzo)
 
     except Exception as e:
         logging.error(f"Errore Copia Rapida: {e}")
-        await callback.answer("⚠️ Errore nel recupero dati.")
+        # Non usiamo callback.answer qui perché potrebbe essere scaduto
+        await callback.message.answer("⚠️ Errore nel recupero dati.")
         
 # --- 6. LOGICA PUBBLICAZIONE BOZZA (NUOVA SEZIONE) ---
 @router.callback_query(StateFilter(None), F.data.startswith("publish_ad:"))
@@ -1015,6 +1063,82 @@ async def publish_ad_set_date(message: Message, state: FSMContext):
     finally:
         await state.clear()
 
+    # --- TEMPORARY TEST DATA GENERATOR ---
+from aiogram.filters import Command
+import random
+from datetime import timedelta
+@router.message(Command("testdata"))
+async def generate_test_data(message: Message):
+    """
+    Comando segreto per popolare il DB con dati falsi per testare le statistiche.
+    FIX: Passa oggetti datetime corretti alle funzioni del DB.
+    """
+    user_id = message.from_user.id
+    await message.answer("🧪 Inizio generazione dati fake...")
+
+    # 1. Recupera ID utili
+    cats = await db.get_all_categories()
+    platforms = await db.get_all_platforms()
+    if not cats or not platforms:
+        await message.answer("Errore: Categorie o piattaforme mancanti nel DB.")
+        return
+
+    # Recupera ID stati
+    st_sold = (await db._fetch_one("SELECT id_status_type FROM status_type WHERE name='SOLD'"))['id_status_type']
+    st_sched = (await db._fetch_one("SELECT id_status_type FROM status_type WHERE name='SCHEDULED'"))['id_status_type']
+    st_pub = (await db._fetch_one("SELECT id_status_type FROM status_type WHERE name='PUBLISHED'"))['id_status_type']
+    st_other = (await db._fetch_one("SELECT id_status_type FROM status_type WHERE name='SOLD_OTHER_PLATFORM'"))['id_status_type']
+
+    # 2. Genera 5 annunci VENDUTI (passato)
+    for i in range(1, 6):
+        cat = random.choice(cats)['id_category']
+        price = random.randint(10, 150) + 0.99
+        ad_id = await db.add_ad(user_id, "Descrizione Fake", f"Oggetto Venduto #{i}", "Descrizione gen", price, cat)
+        
+        # Simula vendita su una piattaforma random
+        winner_plat = random.choice(platforms)['id_platform']
+        # NOTA: Per SQL grezzo serve STRINGA
+        sold_date = (datetime.now() - timedelta(days=random.randint(1, 30))).strftime("%Y-%m-%d %H:%M:%S")
+        
+        await db._execute_query(
+            "INSERT INTO publication_ad (id_ad, id_platform, id_status_type, sold_price, sold_datetime) VALUES (?, ?, ?, ?, ?)",
+            (ad_id, winner_plat, st_sold, price, sold_date)
+        )
+        loser_plat = [p['id_platform'] for p in platforms if p['id_platform'] != winner_plat][0]
+        await db._execute_query(
+            "INSERT INTO publication_ad (id_ad, id_platform, id_status_type, deleted_datetime) VALUES (?, ?, ?, ?)",
+            (ad_id, loser_plat, st_other, sold_date)
+        )
+
+    # 3. Genera 3 annunci PROGRAMMATI (futuro)
+    for i in range(1, 4):
+        cat = random.choice(cats)['id_category']
+        price = random.randint(20, 80)
+        ad_id = await db.add_ad(user_id, "Descrizione Fake", f"Oggetto Futuro #{i}", "Descrizione gen", price, cat)
+        
+        # NOTA: Per add_publication_entry serve OGGETTO DATETIME (senza strftime)
+        future_date = datetime.now() + timedelta(days=random.randint(1, 7))
+        plat = random.choice(platforms)['id_platform']
+        
+        await db.add_publication_entry(ad_id, plat, st_sched, future_date)
+
+    # 4. Genera 2 annunci PUBBLICATI (attivi ora)
+    for i in range(1, 3):
+        cat = random.choice(cats)['id_category']
+        price = random.randint(5, 50)
+        ad_id = await db.add_ad(user_id, "Descrizione Fake", f"Oggetto Online #{i}", "Descrizione gen", price, cat)
+        
+        plat = random.choice(platforms)['id_platform']
+        # NOTA: Per SQL grezzo serve STRINGA
+        pub_date = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S")
+        
+        await db._execute_query(
+            "INSERT INTO publication_ad (id_ad, id_platform, id_status_type, publication_datetime) VALUES (?, ?, ?, ?)",
+            (ad_id, plat, st_pub, pub_date)
+        )
+
+    await message.answer("✅ **Dati Generati!**\nOra prova a premere '📊 Statistiche' o '🛍️ I Miei Annunci'.")
+    
 @router.message(StateFilter(None)) # Cattura tutto solo se NON c'è uno stato attivo (es. non sto scrivendo la descrizione)
 async def catch_all_message(message: Message):
     """
@@ -1025,3 +1149,4 @@ async def catch_all_message(message: Message):
         "Usa i pulsanti del menu qui sotto per navigare.",
         reply_markup=kb.get_main_menu()
     )
+    

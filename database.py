@@ -874,3 +874,65 @@ class DatabaseManager:
                 # Fallback: maybe account_type 1 doesn't exist? Try to update user directly? No, schema enforces subscription.
                 # Use account_type 2 if 1 fails?
                 # For now, we log error.
+# --- NUOVE FUNZIONI PER VENDITA MULTI-PIATTAFORMA ---
+    
+    async def get_ad_active_platforms(self, id_ad: int):
+        """
+        Restituisce la lista delle piattaforme dove l'annuncio è attualmente
+        programmato o pubblicato (non eliminato o venduto).
+        """
+        query = """
+        SELECT p.id_platform, p.name
+        FROM publication_ad pa
+        JOIN platform p ON pa.id_platform = p.id_platform
+        WHERE pa.id_ad = ? 
+        AND pa.deleted_datetime IS NULL
+        AND pa.id_status_type NOT IN (
+            SELECT id_status_type FROM status_type WHERE name IN ('SOLD', 'SOLD_OTHER_PLATFORM')
+        )
+        GROUP BY p.id_platform
+        """
+        return await self._fetch_all(query, (id_ad,))
+
+    async def finalize_sale(self, id_ad: int, id_platform_winner: int, price: float):
+        """
+        1. Segna come SOLD la pubblicazione sulla piattaforma vincente.
+        2. Segna come SOLD_OTHER_PLATFORM tutte le altre.
+        """
+        # Recuperiamo gli ID degli stati
+        sold_id = (await self._fetch_one("SELECT id_status_type FROM status_type WHERE name='SOLD'"))['id_status_type']
+        other_id = (await self._fetch_one("SELECT id_status_type FROM status_type WHERE name='SOLD_OTHER_PLATFORM'"))['id_status_type']
+        
+        now_iso = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # A. Aggiorniamo il VINCITORE
+        # Se id_platform_winner è 0 o None (Vendita Privata/Manuale), dobbiamo creare una riga fittizia o gestire diversamente?
+        # Per semplicità, se è vendita privata, non tocchiamo una pubblicazione specifica ma aggiorniamo l'annuncio generale?
+        # Qui assumiamo che l'utente scelga una piattaforma o "Altro".
+        
+        if id_platform_winner:
+            # Segna la piattaforma vincente come SOLD
+            await self._execute_query("""
+                UPDATE publication_ad 
+                SET id_status_type = ?, sold_price = ?, sold_datetime = ?
+                WHERE id_ad = ? AND id_platform = ? AND deleted_datetime IS NULL
+            """, (sold_id, price, now_iso, id_ad, id_platform_winner))
+            
+            # Segna le ALTRE come SOLD_OTHER_PLATFORM
+            await self._execute_query("""
+                UPDATE publication_ad 
+                SET id_status_type = ?, deleted_datetime = ?
+                WHERE id_ad = ? AND id_platform != ? AND deleted_datetime IS NULL
+            """, (other_id, now_iso, id_ad, id_platform_winner))
+        
+        else:
+            # Caso "Vendita Privata" (nessuna piattaforma specifica)
+            # Potremmo marcare TUTTE come SOLD_OTHER o semplicemente SOLD generico.
+            # Per ora segniamo tutto come SOLD su piattaforma generica se esistesse, ma facciamo che chiude tutto.
+            await self._execute_query("""
+                UPDATE publication_ad 
+                SET id_status_type = ?, sold_price = ?, sold_datetime = ?
+                WHERE id_ad = ? AND deleted_datetime IS NULL
+            """, (sold_id, price, now_iso, id_ad))
+
+        return True
