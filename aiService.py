@@ -50,11 +50,10 @@ async def ad_text_generator(product_description: str, foto_bytes: bytes = None) 
 
     Obiettivo: generare SOLO questo JSON valido (nessun testo fuori dal JSON):
 
-    {
+    Il formato deve essere:
     "title": "string (<=60 chars)",
     "description": "string (1-3 frasi, tono amichevole e professionale; emoji moderate; 3-5 hashtag alla fine)",
     "price": float
-    }
 
     Regole:
 
