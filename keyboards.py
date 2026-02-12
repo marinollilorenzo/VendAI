@@ -45,7 +45,18 @@ def get_ad_manage_kb(ad_id: int, status: str) -> InlineKeyboardMarkup:
     
     if status != 'SOLD':
         # This now uses the correct callback data to trigger the existing FSM
-        builder.button(text="✅ Segna Venduto", callback_data=f"sell_select:{ad_id}")
+        # We can also add a direct shortcut "sell_ad:{ad_id}" if we implement that handler, 
+        # but reusing sell_select:{ad_id} is fine if the wizard handles direct ID input.
+        # handlers.py has `sell_select:{ad_id}` which leads to `sell_ad_ask_price`.
+        # However, `sell_ad_ask_price` expects `AdSelling.WAITING_AD_SELECTION` state or direct flow?
+        # Let's check handlers.py: `sell_ad_ask_price` triggers on `sell_select:`.
+        # It transitions to `WAITING_PRICE`.
+        # BUT `start_sell_ad_wizard` sets `WAITING_AD_SELECTION`.
+        # If we click this button from "My Ads" (state=None), the handler `sell_ad_ask_price` needs to work.
+        # `sell_ad_ask_price` is decorated with `AdSelling.WAITING_AD_SELECTION`.
+        # So we might need a separate callback or adjust the handler filter to allow None state.
+        # Let's use a new callback `sell_ad:{ad_id}` which we added in handlers.py.
+        builder.button(text="✅ Segna Venduto", callback_data=f"sell_ad:{ad_id}")
 
     # Destructive action is always available
     builder.button(text="🗑️ Elimina", callback_data=f"delete_ad:{ad_id}")

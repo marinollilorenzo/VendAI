@@ -30,6 +30,8 @@ class AdCreation(StatesGroup):
     WAITING_CATEGORY = State()
     WAITING_PLATFORM_SELECTION = State() # Renamed/New
     WAITING_DATE_INPUT = State() # Renamed/New
+    WAITING_EDIT_CHOICE = State() # Showing the edit menu during creation
+    WAITING_EDIT_VALUE = State() # Waiting for new value during creation
 
 class AdEditing(StatesGroup):
     CHOOSING_FIELD = State()
@@ -184,21 +186,56 @@ async def ad_creation_photo_handler(message: Message, state: FSMContext):
 
 # Handler for Manual Edit (Creation Phase)
 @router.callback_query(AdCreation.WAITING_CONFIRM, F.data == "edit_creation_start")
-async def ad_creation_manual_edit_start(callback: CallbackQuery, state: FSMContext):
-    await callback.message.answer("✏️ Inviami la nuova descrizione completa per l'annuncio.")
-    await state.set_state(AdCreation.WAITING_MANUAL_TEXT)
+async def edit_creation_start(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text("Cosa vuoi modificare?", reply_markup=kb.get_edit_menu_kb(0)) # 0 as dummy ID
+    await state.set_state(AdCreation.WAITING_EDIT_CHOICE)
     await callback.answer()
 
-@router.message(AdCreation.WAITING_MANUAL_TEXT, F.text)
-async def ad_creation_manual_edit_save(message: Message, state: FSMContext):
-    # Update description, keep title/price from previous draft or ask? 
-    # Simpler: just update description for now as it's the most common edit.
-    await state.update_data(draft_description=message.text)
-    data = await state.get_data()
+@router.callback_query(AdCreation.WAITING_EDIT_CHOICE, F.data.startswith("edit_field_"))
+async def edit_creation_field(callback: CallbackQuery, state: FSMContext):
+    field = callback.data.split(":")[0].split("_")[-1] # title, description, price
+    await state.update_data(field_to_edit=field)
     
-    preview_text = f"✨ **Anteprima Aggiornata** ✨\n\n**Titolo:**\n{data.get('draft_title')}\n\n**Descrizione:**\n{data.get('draft_description')}\n\n**Prezzo Suggerito:** {data.get('draft_price')} €"
-    await message.answer(preview_text, parse_mode="Markdown", reply_markup=kb.get_confirmation_kb("creation", 0))
+    # Translation
+    field_map = {"title": "Titolo", "description": "Descrizione", "price": "Prezzo"}
+    field_label = field_map.get(field, field.capitalize())
+    
+    await callback.message.edit_text(f"Invia il nuovo {field_label}:")
+    await state.set_state(AdCreation.WAITING_EDIT_VALUE)
+    await callback.answer()
+
+@router.message(AdCreation.WAITING_EDIT_VALUE, F.text)
+async def save_creation_edit(message: Message, state: FSMContext):
+    data = await state.get_data()
+    field = data['field_to_edit']
+    value = message.text
+    
+    key = None
+    if field == 'price':
+        try:
+            value = float(value.replace(',', '.'))
+            key = 'draft_price'
+        except:
+            await message.answer("Prezzo non valido.")
+            return
+    elif field == 'title':
+        key = 'draft_title'
+    elif field == 'description':
+        key = 'draft_description'
+        
+    if key:
+        await state.update_data({key: value})
+    
+    await message.answer("✅ Modificato!", reply_markup=kb.get_edit_menu_kb(0))
+    await state.set_state(AdCreation.WAITING_EDIT_CHOICE)
+
+@router.callback_query(AdCreation.WAITING_EDIT_CHOICE, F.data.startswith("finish_edit:"))
+async def finish_creation_edit(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    preview_text = f"✨ **Ecco la tua anteprima!** ✨\n\n**Titolo:**\n{data.get('draft_title')}\n\n**Descrizione:**\n{data.get('draft_description')}\n\n**Prezzo Suggerito:** {data.get('draft_price')} €"
+    await callback.message.edit_text(preview_text, parse_mode="Markdown", reply_markup=kb.get_confirmation_kb("creation", 0))
     await state.set_state(AdCreation.WAITING_CONFIRM)
+    await callback.answer()
 
 @router.callback_query(AdCreation.WAITING_CONFIRM, F.data.startswith("confirm_creation"))
 async def ad_creation_ask_category(callback: CallbackQuery, state: FSMContext):
@@ -316,8 +353,12 @@ async def ad_creation_finish(callback: CallbackQuery, state: FSMContext):
 @router.message(F.text == "🛍️ I Miei Annunci", StateFilter(None))
 async def my_ads_handler(message: Message):
     user_ads = await db.get_user_ads(message.from_user.id, limit=20)
+    
+    # Filter out deleted ads (if not handled by DB query yet - now handled by DB but keep safe)
+    user_ads = [ad for ad in user_ads if ad.get('status_name') != 'DELETED']
+
     if not user_ads:
-        await message.answer("Nessun annuncio creato. Inizia con '🆕 Crea Annuncio'!")
+        await message.answer("Nessun annuncio attivo. Inizia con '🆕 Crea Annuncio'!")
         return
     await message.answer(f"Ecco i tuoi {len(user_ads)} annunci più recenti:")
     for ad in user_ads:
@@ -341,6 +382,8 @@ async def my_ads_handler(message: Message):
 async def edit_ad_start(callback: CallbackQuery, state: FSMContext):
     ad_id = int(callback.data.split(":")[1])
     await state.update_data(ad_id_to_edit=ad_id)
+    
+    # Focus Mode: Edit the message to show only the edit menu
     await callback.message.edit_text(f"Cosa vuoi modificare per l'annuncio #{ad_id}?", reply_markup=kb.get_edit_menu_kb(ad_id))
     await state.set_state(AdEditing.CHOOSING_FIELD)
     await callback.answer()
@@ -349,7 +392,12 @@ async def edit_ad_start(callback: CallbackQuery, state: FSMContext):
 async def edit_field_ask_new_value(callback: CallbackQuery, state: FSMContext):
     field_to_edit = callback.data.split(":")[0].split("_")[-1]
     await state.update_data(field_to_edit=field_to_edit)
-    await callback.message.edit_text(f"OK, inviami il nuovo valore per **{field_to_edit.capitalize()}**.")
+    
+    # Translation
+    field_map = {"title": "Titolo", "description": "Descrizione", "price": "Prezzo"}
+    field_label = field_map.get(field_to_edit, field_to_edit.capitalize())
+    
+    await callback.message.edit_text(f"OK, inviami il nuovo valore per **{field_label}**.")
     await state.set_state(AdEditing.WAITING_NEW_VALUE)
     await callback.answer()
 
@@ -387,10 +435,13 @@ async def edit_field_save_new_value(message: Message, state: FSMContext):
 @router.callback_query(AdEditing.CHOOSING_FIELD, F.data.startswith("finish_edit:"))
 async def edit_ad_finish(callback: CallbackQuery, state: FSMContext):
     ad_id = int(callback.data.split(":")[1])
+    
+    # Return to the My Ads list
     await state.clear()
-    await callback.answer("✅ Modifiche salvate.")
-    await callback.message.delete()
-    await my_ads_handler(callback.message)
+    await callback.message.delete() # Clean up the edit menu
+    await callback.message.answer(f"✅ Modifiche all'annuncio #{ad_id} salvate.")
+    await my_ads_handler(callback.message) # Show the list again
+    await callback.answer()
 
 # Aggiungi questo PRIMA o DOPO gli altri handler di vendita
 @router.callback_query(F.data.startswith("sell_ad:"))
@@ -505,6 +556,11 @@ async def universal_cancel_handler(callback: CallbackQuery, state: FSMContext):
     A universal handler to cancel any FSM state and clean up the conversation.
     """
     current_state = await state.get_state()
+    data = await state.get_data()
+    
+    # Try to determine if we were editing a specific ad
+    ad_id = data.get('ad_id_to_edit') or data.get('ad_id_to_delete') or data.get('ad_id_to_publish')
+    
     if current_state is not None:
         logging.info(f"Cancelling state {current_state} via cancel button.")
         await state.clear()
@@ -512,6 +568,24 @@ async def universal_cancel_handler(callback: CallbackQuery, state: FSMContext):
     else:
         # If no state is active, just remove the inline keyboard
         await callback.message.edit_text(callback.message.text, reply_markup=None)
+    
+    # Smart Fallback: if we were working on an ad, show its details/management menu again
+    if ad_id:
+        # We need to construct a callback to reuse the view handler logic, or just call logic directly.
+        # Calling logic directly is cleaner than faking a callback object.
+        # However, reusing the handler requires a CallbackQuery object.
+        # Let's just send a new message with the management menu for that ad.
+        try:
+            ad_details = await db.get_ad_details(ad_id, callback.from_user.id)
+            if ad_details:
+                # Reuse display logic? It's in a handler. 
+                # Let's just send a simple "Back to ad" message.
+                await callback.message.answer(
+                    f"🔙 Torno all'annuncio #{ad_id}",
+                    reply_markup=kb.get_ad_manage_kb(ad_id, ad_details.get('status_name', 'DRAFT'))
+                )
+        except Exception:
+            pass # Ignore errors in fallback
         
     await callback.answer("Annullato.")
 
@@ -553,15 +627,24 @@ async def view_ad_details_handler(callback: CallbackQuery, state: FSMContext):
         if sold_date:
             details_text += f"\n🤝 **Venduto il:** {sold_date}\n"
 
-        # Sezione Programmazioni (Solo Future)
-        # Qui servirebbe una query extra per avere TUTTE le piattaforme, 
-        # ma per ora usiamo quella principale se c'è.
-        sched_date = format_dt(ad_details.get('scheduled_datetime'))
-        if sched_date and not sold_date:
-             # Controlliamo se è futura
-             dt_obj = datetime.strptime(ad_details.get('scheduled_datetime'), '%Y-%m-%d %H:%M:%S')
-             if dt_obj > datetime.now():
-                details_text += f"\n🗓️ **Programmato per:** {sched_date}\n"
+        # Sezione Programmazioni (Tutte le future)
+        pub_list = await db.get_ad_publications(ad_id)
+        future_pubs = []
+        now = datetime.now()
+        
+        for pub in pub_list:
+            # pub is {'platform': ..., 'date': 'YYYY-MM-DD HH:MM'} from get_ad_publications
+            # BUT get_ad_publications returns formatted date string in 'YYYY-MM-DD HH:MM'
+            # Let's parse it back to check if it's future
+            try:
+                dt_obj = datetime.strptime(pub['date'], '%Y-%m-%d %H:%M')
+                if dt_obj > now:
+                    future_pubs.append(f"🗓️ {pub['platform']}: {pub['date']}")
+            except ValueError:
+                pass
+
+        if future_pubs and not sold_date:
+            details_text += "\n**Programmazioni Future:**\n" + "\n".join(future_pubs) + "\n"
 
         await callback.message.edit_text(details_text, reply_markup=callback.message.reply_markup, parse_mode="Markdown")
         await callback.answer()

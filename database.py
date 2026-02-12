@@ -273,6 +273,30 @@ class DatabaseManager:
         logger.info(f"Fetched {len(results)} ads for user {id_telegram_user}.")
         return results
 
+    async def get_ad_publications(self, id_ad: int):
+        """
+        Retrieves a list of publications for an ad with platform name and formatted date.
+        """
+        query = """
+        SELECT p.name as platform, pa.scheduled_datetime as date
+        FROM publication_ad pa
+        JOIN platform p ON pa.id_platform = p.id_platform
+        WHERE pa.id_ad = ? AND pa.deleted_datetime IS NULL
+        ORDER BY pa.scheduled_datetime ASC
+        """
+        results = await self._fetch_all(query, (id_ad,))
+        formatted = []
+        for row in results:
+            dt_str = row['date']
+            if dt_str:
+                try:
+                    dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
+                    formatted_date = dt.strftime("%Y-%m-%d %H:%M")
+                    formatted.append({'platform': row['platform'], 'date': formatted_date})
+                except ValueError:
+                    pass
+        return formatted
+
     async def get_active_ads_for_scheduling(self):
         """
         Retrieves advertisements that are currently scheduled or ready for publication.
@@ -318,6 +342,7 @@ class DatabaseManager:
         LEFT JOIN status_type AS st ON pa.id_status_type = st.id_status_type
         WHERE a.id_telegram_user = ?
         AND (st.name != 'SOLD' OR st.name IS NULL)
+        AND (st.name != 'DELETED' OR st.name IS NULL)
         AND pa.deleted_datetime IS NULL
         ORDER BY a.created_datetime DESC
         LIMIT ?
@@ -515,6 +540,7 @@ class DatabaseManager:
             status_type AS st ON pa.id_status_type = st.id_status_type
         WHERE
             a.id_telegram_user = ?
+            AND (st.name != 'DELETED' OR st.name IS NULL)
         """
         result = await self._fetch_one(query, (one_month_ago_iso, one_year_ago_iso, id_telegram_user,))
         if result:
@@ -546,7 +572,6 @@ class DatabaseManager:
         results = await self._fetch_all(query, (id_telegram_user,))
         logger.info(f"Fetched category chart data for user {id_telegram_user}.")
         return results
-
     # --- SUBSCRIPTION / CREDIT FUNCTIONS ---
     async def get_user_credits(self, id_telegram_user: int) -> int:
         """
