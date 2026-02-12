@@ -5,7 +5,8 @@ from aiogram import Router, F, types
 from aiogram.filters import CommandStart, StateFilter, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, CallbackQuery, BufferedInputFile, InlineKeyboardBuilder
+from aiogram.types import Message, CallbackQuery, BufferedInputFile
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 import matplotlib.pyplot as plt
 import seaborn as sns
 from datetime import datetime
