@@ -297,6 +297,34 @@ class DatabaseManager:
                     pass
         return formatted
 
+    async def mark_ad_as_deleted(self, id_ad: int):
+        """
+        Marks ALL publications associated with an ad as deleted.
+        This ensures the ad disappears completely from lists.
+        """
+        # 1. Recuperiamo l'ID dello stato 'DELETED'
+        status_query = "SELECT id_status_type FROM status_type WHERE name = 'DELETED'"
+        status_res = await self._fetch_one(status_query)
+        
+        if not status_res:
+            # Fallback se non esiste lo stato (non dovrebbe succedere)
+            return False
+
+        deleted_status_id = status_res['id_status_type']
+        now_iso = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # 2. Aggiorniamo TUTTE le righe di pubblicazione per quell'annuncio
+        # La chiave è: WHERE id_ad = ? (e non id_publication_ad)
+        update_query = """
+        UPDATE publication_ad 
+        SET deleted_datetime = ?, 
+            id_status_type = ?
+        WHERE id_ad = ? AND deleted_datetime IS NULL
+        """
+        await self._execute_query(update_query, (now_iso, deleted_status_id, id_ad))
+        logger.info(f"Marked all publications for ad {id_ad} as DELETED.")
+        return True
+    
     async def get_active_ads_for_scheduling(self):
         """
         Retrieves advertisements that are currently scheduled or ready for publication.

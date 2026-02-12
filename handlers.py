@@ -515,20 +515,19 @@ async def delete_ad_confirm(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(f"Sei sicuro di voler eliminare l'annuncio #{ad_id}?", reply_markup=kb.get_confirmation_kb("delete", ad_id))
     await state.set_state(AdDeleting.WAITING_CONFIRMATION)
     await callback.answer()
-
 @router.callback_query(AdDeleting.WAITING_CONFIRMATION, F.data.startswith("confirm_delete:"))
 async def delete_ad_execute(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     ad_id = data['ad_id_to_delete']
-    pub_id = await db.get_latest_publication_id_for_ad(ad_id)
-    if pub_id:
-        await db.mark_publication_as_deleted(pub_id)
-        await callback.message.edit_text(f"🗑️ Annuncio #{ad_id} eliminato.")
-    else: # If no publication, we might need a way to delete the ad itself, this is a logic gap. For now, we assume it has a pub.
-        await callback.message.edit_text("Impossibile eliminare, nessuna pubblicazione trovata.")
+    # Chiamiamo la nuova funzione che pulisce TUTTO
+    await db.mark_ad_as_deleted(ad_id)
+    await callback.message.edit_text(f"🗑️ Annuncio #{ad_id} eliminato definitivamente.")
     await state.clear()
     await callback.answer()
-
+    # Ricarichiamo la lista per far vedere che è sparito
+    # (Opzionale, ma consigliato per feedback immediato)
+    await asyncio.sleep(1)
+    await my_ads_handler(callback.message)
 # --- 6. Stats Handler ---
 @router.message(F.text == "📊 Statistiche", StateFilter(None))
 async def stats_handler(message: Message):
