@@ -51,6 +51,46 @@ class AdPublishing(StatesGroup):
 
 
 # --- Helper Functions ---
+async def clear_previous_ads_messages(state: FSMContext, bot, chat_id, keep_message_id: int = None):
+    """
+    Recupera la lista dei messaggi degli annunci salvati nello stato ed elimina tutti quelli
+    che non corrispondono a keep_message_id.
+    """
+    data = await state.get_data()
+    msg_ids = data.get('ad_message_ids', [])
+    
+    for msg_id in msg_ids:
+        if keep_message_id and msg_id == keep_message_id:
+            continue # Salta quello che vogliamo tenere visibile
+        
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+        except Exception:
+            # Ignora errori (es. messaggio già cancellato o troppo vecchio)
+            pass
+            
+    # Aggiorniamo la lista nello stato: se ne abbiamo tenuto uno, rimane solo quello
+    if keep_message_id:
+        await state.update_data(ad_message_ids=[keep_message_id])
+    else:
+        await state.update_data(ad_message_ids=[])
+
+async def clear_previous_menu_message(state: FSMContext, bot, chat_id):
+    """
+    Cancella l'ultimo messaggio di menu (Profilo, Abbonamenti, Stats) salvato nello stato.
+    """
+    data = await state.get_data()
+    last_menu_id = data.get('last_menu_msg_id')
+    
+    if last_menu_id:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=last_menu_id)
+        except Exception:
+            pass # Già cancellato o troppo vecchio
+            
+    # Rimuoviamo l'ID dallo stato per pulizia
+    await state.update_data(last_menu_msg_id=None)
+    
 def generate_pie_chart(data: list) -> io.BytesIO | None:
     if not data:
         return None
@@ -75,29 +115,33 @@ def generate_pie_chart(data: list) -> io.BytesIO | None:
     "📊 Statistiche", "💎 Abbonamenti", "👤 Profilo", "❓ Aiuto"
 }))
 async def global_menu_handler(message: Message, state: FSMContext):
+    # 1. Pulizia Totale: Cancelliamo eventuali liste di annunci aperte
+    await clear_previous_ads_messages(state, message.bot, message.chat.id)
+    
     current_state = await state.get_state()
     if current_state is not None:
         logging.info(f"Cancelling state {current_state} due to menu navigation.")
         await state.clear()
-        await message.answer("Operazione precedente annullata.", reply_markup=kb.get_main_menu())
+        # Feedback visivo
+        await message.answer("🔄", reply_markup=kb.get_main_menu())
+        # (Opzionale: cancellare subito il messaggio "🔄" per pulizia estrema)
 
-    # Route to the correct handler after clearing the state
+    # Route to the correct handler - ASSICURATI DI PASSARE 'state' A TUTTI
     if message.text == "🆕 Crea Annuncio":
         await start_ad_creation(message, state)
     elif message.text == "🛍️ I Miei Annunci":
-        await my_ads_handler(message)
+        await my_ads_handler(message, state) 
     elif message.text == "✅ Segna Venduto":
         await start_sell_ad_wizard(message, state)
     elif message.text == "📊 Statistiche":
-        await stats_handler(message)
+        await stats_handler(message, state) 
     elif message.text == "💎 Abbonamenti":
-        await subscription_handler(message)
+        await subscription_handler(message, state) 
     elif message.text == "👤 Profilo":
-        await profile_handler(message)
+        await profile_handler(message, state)
     elif message.text == "❓ Aiuto":
         await start_handler(message, state)
-
-# --- Core Command & Menu Handlers (No State) ---
+        
 @router.message(CommandStart())
 async def start_handler(message: Message, state: FSMContext):
     await state.clear()
@@ -116,17 +160,36 @@ async def start_handler(message: Message, state: FSMContext):
     await message.answer(welcome_text, reply_markup=kb.get_main_menu(), parse_mode="Markdown")
 
 @router.message(F.text == "👤 Profilo", StateFilter(None))
-async def profile_handler(message: Message):
+async def profile_handler(message: Message, state: FSMContext): # Aggiungi state=None
+    # 1. Pulizia: Cancelliamo menu precedenti (e anche la lista annunci se c'era)
+    if state:
+        await clear_previous_ads_messages(state, message.bot, message.chat.id)
+        await clear_previous_menu_message(state, message.bot, message.chat.id)
+
     credits = await db.get_user_credits(message.from_user.id)
-    await message.answer(
+    
+    # 2. Invio Nuovo Messaggio
+    sent_msg = await message.answer(
         f"👤 **Profilo Utente**\n\nID: `{message.from_user.id}`\nCrediti: **{credits}** 💎",
         reply_markup=kb.get_profile_kb(), parse_mode="Markdown"
     )
+    
+    # 3. Salvataggio ID
+    if state:
+        await state.update_data(last_menu_msg_id=sent_msg.message_id)
 
 @router.message(F.text == "💎 Abbonamenti", StateFilter(None))
-async def subscription_handler(message: Message):
+async def subscription_handler(message: Message, state: FSMContext):
+    if state:
+        await clear_previous_ads_messages(state, message.bot, message.chat.id)
+        await clear_previous_menu_message(state, message.bot, message.chat.id)
+
     mock_plans = [{"id_account_type": 2, "name": "Pro", "price_euro": 2.99}, {"id_account_type": 3, "name": "Ultimate", "price_euro": 4.99}]
-    await message.answer("Scegli un piano:", reply_markup=kb.get_subscription_kb(mock_plans))
+    
+    sent_msg = await message.answer("Scegli un piano:", reply_markup=kb.get_subscription_kb(mock_plans))
+    
+    if state:
+        await state.update_data(last_menu_msg_id=sent_msg.message_id)
 
 @router.callback_query(F.data == "main_menu")
 async def back_to_main_menu_callback(callback: CallbackQuery, state: FSMContext):
@@ -382,44 +445,77 @@ async def ad_creation_finish(callback: CallbackQuery, state: FSMContext):
 
 # --- 2. Ad Listing and Management ---
 @router.message(F.text == "🛍️ I Miei Annunci", StateFilter(None))
-async def my_ads_handler(message: Message):
-    user_ads = await db.get_user_ads(message.from_user.id, limit=20)
+async def my_ads_handler(message: Message, state: FSMContext = None): 
+    # NOTA: ho aggiunto state=None opzionale per compatibilità, ma router passerà lo stato
     
-    # Filter out deleted ads (if not handled by DB query yet - now handled by DB but keep safe)
+    # 1. Recupero utente e gestione compatibilità (se chiamato da callback o message)
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    bot = message.bot
+    
+    # Se ci viene passato lo stato, facciamo pulizia preventiva della vecchia lista
+    if state:
+        await clear_previous_ads_messages(state, bot, chat_id)
+    
+    # 2. Query Database (ordinata con priorità)
+    user_ads = await db.get_user_ads(user_id, limit=20)
     user_ads = [ad for ad in user_ads if ad.get('status_name') != 'DELETED']
 
     if not user_ads:
         await message.answer("Nessun annuncio attivo. Inizia con '🆕 Crea Annuncio'!")
+        if state: await state.update_data(ad_message_ids=[])
         return
-    await message.answer(f"Ecco i tuoi {len(user_ads)} annunci più recenti:")
+
+    # 3. Invio messaggi e tracciamento ID
+    await message.answer(f"📂 **I Miei Annunci** ({len(user_ads)})")
+    
+    new_msg_ids = [] # Lista per tracciare i nuovi messaggi
+    
     for ad in user_ads:
         status_map = {
-            'DRAFT': 'Bozza',
-            'SCHEDULED': 'Programmato',
-            'READY': 'Pronto',
-            'PUBLISHED': 'Pubblicato',
-            'SOLD': 'Venduto',
-            'DELETED': 'Eliminato'
+            'DRAFT': 'Bozza', 'SCHEDULED': 'Programmato', 'READY': 'Pronto',
+            'PUBLISHED': 'Pubblicato', 'SOLD': 'Venduto', 'DELETED': 'Eliminato'
         }
         raw_status = ad.get('status_name', 'DRAFT')
         status = status_map.get(raw_status, raw_status)
         
         ad_text = f"🏷️ **{ad['generated_title']}**\nID: `{ad['id_ad']}` | Stato: `{status}`"
-        await message.answer(ad_text, parse_mode="Markdown", reply_markup=kb.get_ad_manage_kb(ad['id_ad'], raw_status)) # Pass raw status for logic
+        
+        sent_msg = await message.answer(
+            ad_text, 
+            parse_mode="Markdown", 
+            reply_markup=kb.get_ad_manage_kb(ad['id_ad'], raw_status)
+        )
+        new_msg_ids.append(sent_msg.message_id)
         await asyncio.sleep(0.1)
-
+        
+    # 4. Salviamo gli ID nello stato per poterli cancellare dopo
+    if state:
+        await state.update_data(ad_message_ids=new_msg_ids)
 # --- 3. Ad Editing FSM ---
 @router.callback_query(F.data.startswith("edit_ad:"))
 async def edit_ad_start(callback: CallbackQuery, state: FSMContext):
     ad_id = int(callback.data.split(":")[1])
     await state.update_data(ad_id_to_edit=ad_id)
     
-    # Focus Mode: Edit the message to show only the edit menu
-    await callback.message.edit_text(f"Cosa vuoi modificare per l'annuncio #{ad_id}?", reply_markup=kb.get_edit_menu_kb(ad_id))
+    # --- AUTO-PULIZIA: FOCUS MODE ---
+    # Cancelliamo tutti gli altri annunci dalla chat, tenendo solo questo
+    await clear_previous_ads_messages(
+        state, 
+        callback.bot, 
+        callback.message.chat.id, 
+        keep_message_id=callback.message.message_id
+    )
+    
+    # Modifichiamo l'unico messaggio rimasto
+    await callback.message.edit_text(
+        f"✏️ **Modifica Annuncio #{ad_id}**\n"
+        "Cosa vuoi cambiare?", 
+        reply_markup=kb.get_edit_menu_kb(ad_id)
+    )
     await state.set_state(AdEditing.CHOOSING_FIELD)
     await callback.answer()
-
-@router.callback_query(AdEditing.CHOOSING_FIELD, F.data.startswith("edit_field_"))
+    
 @router.callback_query(AdEditing.CHOOSING_FIELD, F.data.startswith("edit_field_"))
 async def edit_field_ask_new_value(callback: CallbackQuery, state: FSMContext):
     field_to_edit = callback.data.split(":")[0].split("_")[-1]
@@ -509,18 +605,55 @@ async def edit_field_save_new_value(message: Message, state: FSMContext):
         logging.error(f"Error updating field {field} for ad {ad_id}: {e}")
         await message.answer("Si è verificato un errore durante l'aggiornamento. Riprova.")
         await state.clear()
-
 @router.callback_query(AdEditing.CHOOSING_FIELD, F.data.startswith("finish_edit:"))
 async def edit_ad_finish(callback: CallbackQuery, state: FSMContext):
     ad_id = int(callback.data.split(":")[1])
     
-    # Return to the My Ads list
+    # 1. Pulizia: Cancelliamo il menu di modifica
     await state.clear()
-    await callback.message.delete() # Clean up the edit menu
-    await callback.message.answer(f"✅ Modifiche all'annuncio #{ad_id} salvate.")
-    await my_ads_handler(callback.message) # Show the list again
-    await callback.answer()
+    try:
+        await callback.message.delete()
+    except:
+        pass 
 
+    # 2. Feedback
+    await callback.answer("✅ Modifiche salvate!")
+
+    # 3. Recupero Dati Utente
+    user_id = callback.from_user.id
+    user_ads = await db.get_user_ads(user_id, limit=20)
+    user_ads = [ad for ad in user_ads if ad.get('status_name') != 'DELETED']
+
+    if not user_ads:
+        await callback.message.answer("Nessun annuncio attivo. Inizia con '🆕 Crea Annuncio'!")
+        return
+
+    # 4. Ristampa con TRACCIAMENTO ID (Il Fix è qui)
+    await callback.message.answer(f"📂 **I Miei Annunci** ({len(user_ads)})")
+    
+    new_msg_ids = [] # Lista per salvare i nuovi messaggi
+    
+    for ad in user_ads:
+        status_map = {
+            'DRAFT': 'Bozza', 'SCHEDULED': 'Programmato', 'READY': 'Pronto',
+            'PUBLISHED': 'Pubblicato', 'SOLD': 'Venduto', 'DELETED': 'Eliminato'
+        }
+        raw_status = ad.get('status_name', 'DRAFT')
+        status = status_map.get(raw_status, raw_status)
+        
+        ad_text = f"🏷️ **{ad['generated_title']}**\nID: `{ad['id_ad']}` | Stato: `{status}`"
+        
+        sent_msg = await callback.message.answer(
+            ad_text, 
+            parse_mode="Markdown", 
+            reply_markup=kb.get_ad_manage_kb(ad['id_ad'], raw_status)
+        )
+        new_msg_ids.append(sent_msg.message_id) # Salviamo l'ID!
+        await asyncio.sleep(0.1)
+
+    # 5. Aggiorniamo lo stato con i nuovi ID per poterli cancellare in futuro
+    await state.update_data(ad_message_ids=new_msg_ids)
+    
 # Aggiungi questo PRIMA o DOPO gli altri handler di vendita
 @router.callback_query(F.data.startswith("sell_ad:"))
 async def sell_ad_inline_start(callback: CallbackQuery, state: FSMContext):
@@ -619,24 +752,49 @@ async def delete_ad_execute(callback: CallbackQuery, state: FSMContext):
     
 # --- 6. Stats Handler ---
 @router.message(F.text == "📊 Statistiche", StateFilter(None))
-async def stats_handler(message: Message):
-    await message.answer("📊 Sto generando le tue statistiche...")
-    stats = await db.get_advanced_stats(message.from_user.id)
-    chart_data = await db.get_category_chart_data(message.from_user.id)
-    
-    report = (f"--- **Panoramica** ---\n"
-              f"• Annunci Totali: **{stats['totale_annunci']}**\n"
-              f"• Annunci Venduti: **{stats['totale_vendite']}**\n\n"
-              f"--- **Guadagni** 💰 ---\n"
-              f"• Guadagno Totale: **{stats['guadagno_totale']:.2f} €**\n"
-              f"• Stima Guadagno Futuro: **{stats['stima_guadagno_futuro']:.2f} €**\n")
-    
-    chart_buf = generate_pie_chart(chart_data)
-    if chart_buf:
-        await message.answer_photo(photo=BufferedInputFile(chart_buf.read(), "sales.png"), caption=report, parse_mode="Markdown")
-    else:
-        await message.answer(report, parse_mode="Markdown")
+async def stats_handler(message: Message, state: FSMContext):
+    # 1. Pulizia: Cancelliamo menu precedenti e liste annunci
+    if state:
+        await clear_previous_ads_messages(state, message.bot, message.chat.id)
+        await clear_previous_menu_message(state, message.bot, message.chat.id)
 
+    # 2. Generazione Dati
+    processing_msg = await message.answer("📊 Sto generando le tue statistiche...")
+    
+    try:
+        stats = await db.get_advanced_stats(message.from_user.id)
+        chart_data = await db.get_category_chart_data(message.from_user.id)
+        
+        report = (f"--- **Panoramica** ---\n"
+                  f"• Annunci Totali: **{stats['totale_annunci']}**\n"
+                  f"• Annunci Venduti: **{stats['totale_vendite']}**\n\n"
+                  f"--- **Guadagni** 💰 ---\n"
+                  f"• Guadagno Totale: **{stats['guadagno_totale']:.2f} €**\n"
+                  f"• Stima Guadagno Futuro: **{stats['stima_guadagno_futuro']:.2f} €**\n")
+        
+        chart_buf = generate_pie_chart(chart_data)
+        
+        # 3. Invio Risultato
+        if chart_buf:
+            sent_msg = await message.answer_photo(
+                photo=BufferedInputFile(chart_buf.read(), "sales.png"), 
+                caption=report, 
+                parse_mode="Markdown"
+            )
+        else:
+            sent_msg = await message.answer(report, parse_mode="Markdown")
+        
+        # 4. Salvataggio ID per pulizia futura
+        if state:
+            await state.update_data(last_menu_msg_id=sent_msg.message_id)
+            
+        # Cancelliamo il messaggio temporaneo "Sto generando..."
+        await processing_msg.delete()
+
+    except Exception as e:
+        logging.error(f"Error in stats_handler: {e}")
+        await processing_msg.edit_text("❌ Errore durante la generazione delle statistiche.")
+        
 # --- 4. HANDLER DI ANNULLAMENTO GLOBALE (NUOVA SEZIONE) ---
 @router.callback_query(F.data.startswith("cancel_"))
 async def universal_cancel_handler(callback: CallbackQuery, state: FSMContext):
@@ -724,6 +882,79 @@ async def view_ad_details_handler(callback: CallbackQuery, state: FSMContext):
         logging.error(f"Error viewing details: {e}")
         await callback.answer("Errore recupero dettagli.")
 
+@router.callback_query(F.data.startswith("copy_ad_data:"))
+async def copy_ad_data_handler(callback: CallbackQuery, state: FSMContext):
+    """
+    Recupera la prossima piattaforma programmata, invia i dati separati 
+    e pulisce tutti gli altri messaggi degli annunci.
+    """
+    ad_id = int(callback.data.split(":")[1])
+    user_id = callback.from_user.id
+    
+    try:
+        # 1. Recupero dettagli base dell'annuncio
+        ad = await db.get_ad_details(ad_id, user_id)
+        if not ad:
+            await callback.answer("❌ Errore: Annuncio non trovato.", show_alert=True)
+            return
+
+        # 2. Query per trovare la piattaforma con la data futura più vicina
+        # Cerchiamo in publication_ad una data > ora attuale, ordinata per la più recente
+        query_next_pub = """
+            SELECT p.name as platform_name, pa.scheduled_datetime
+            FROM publication_ad pa
+            JOIN platform p ON pa.id_platform = p.id_platform
+            WHERE pa.id_ad = ? 
+            AND pa.scheduled_datetime > datetime('now', 'localtime')
+            AND pa.deleted_datetime IS NULL
+            ORDER BY pa.scheduled_datetime ASC
+            LIMIT 1
+        """
+        # Utilizziamo il metodo privato _fetch_one del DatabaseManager per la query custom
+        next_pub = await db._fetch_one(query_next_pub, (ad_id,))
+
+        # Prepariamo le info della piattaforma
+        if next_pub:
+            dt_obj = datetime.strptime(next_pub['scheduled_datetime'], '%Y-%m-%d %H:%M:%S')
+            info_pub = f"{next_pub['platform_name']} ({dt_obj.strftime('%d/%m %H:%M')})"
+        else:
+            info_pub = "🌐 Nessuna prox. pubblicazione"
+
+        # 3. PULIZIA TOTALE: Eliminiamo tutti gli altri messaggi degli annunci dalla chat
+        # Teniamo solo il messaggio dell'annuncio su cui l'utente ha cliccato
+        await clear_previous_ads_messages(
+            state, 
+            callback.bot, 
+            callback.message.chat.id, 
+            keep_message_id=callback.message.message_id
+        )
+
+        # 4. Estrazione dati per Vinted
+        titolo = ad.get('generated_title', 'N/D')
+        descrizione = ad.get('generated_description', 'N/D')
+        prezzo = f"{ad.get('suggested_price', 0.0):.2f}".replace(',', '.')
+        categoria = ad.get('category_name', 'Generica')
+
+        # 5. INVIO SEQUENZA MESSAGGI PULITI
+        # Messaggio 1: Header con categoria e info piattaforma programmata
+        await callback.message.answer(
+            f"📋 **Copia Rapida ID #{ad_id}**\n"
+            f"📂 Cat: {categoria} \nPiattaforma: {info_pub}\nDi seguito titolo, descrizione, prezzo:\n"
+        )
+        await asyncio.sleep(0.1)
+        
+        await callback.message.answer(titolo)       # Messaggio 2: Titolo
+        await asyncio.sleep(0.1)
+        await callback.message.answer(descrizione)  # Messaggio 3: Descrizione
+        await asyncio.sleep(0.1)
+        await callback.message.answer(prezzo)       # Messaggio 4: Prezzo (solo cifre)
+        
+        await callback.answer("✅ Dati pronti!")
+
+    except Exception as e:
+        logging.error(f"Errore Copia Rapida: {e}")
+        await callback.answer("⚠️ Errore nel recupero dati.")
+        
 # --- 6. LOGICA PUBBLICAZIONE BOZZA (NUOVA SEZIONE) ---
 @router.callback_query(StateFilter(None), F.data.startswith("publish_ad:"))
 async def publish_ad_start(callback: CallbackQuery, state: FSMContext):
@@ -783,3 +1014,14 @@ async def publish_ad_set_date(message: Message, state: FSMContext):
         await message.answer(f"Si è verificato un errore durante la programmazione: {e}")
     finally:
         await state.clear()
+
+@router.message(StateFilter(None)) # Cattura tutto solo se NON c'è uno stato attivo (es. non sto scrivendo la descrizione)
+async def catch_all_message(message: Message):
+    """
+    Risponde a qualsiasi messaggio di testo non riconosciuto.
+    """
+    await message.answer(
+        "🤔 Non ho capito questo comando.\n"
+        "Usa i pulsanti del menu qui sotto per navigare.",
+        reply_markup=kb.get_main_menu()
+    )

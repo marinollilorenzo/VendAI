@@ -28,29 +28,31 @@ def get_main_menu() -> ReplyKeyboardMarkup:
     return builder.as_markup(resize_keyboard=True)
 def get_ad_manage_kb(ad_id: int, status: str):
     """
-    Generates the management keyboard for an ad.
-    If the ad is SOLD, strictly limits options to 'Details' only.
+    Genera una tastiera compatta su 2 sole righe.
+    Riga 1: Info, Copia, Modifica (3 bottoni piccoli)
+    Riga 2: Venduto, Elimina (2 bottoni larghi)
     """
     builder = InlineKeyboardBuilder()
     
-    # 1. Tasto Dettagli (Sempre visibile)
-    builder.button(text="ℹ️ Dettagli", callback_data=f"view_details:{ad_id}")
-
-    # 2. Tasti Azione (Solo se NON è venduto)
-    if status != 'SOLD':
-        builder.button(text="✏️ Modifica", callback_data=f"edit_ad:{ad_id}")
-        builder.button(text="✅ Segna Venduto", callback_data=f"sell_ad:{ad_id}")
-        builder.button(text="🗑️ Elimina", callback_data=f"delete_ad:{ad_id}")
-    
-    # Layout: 
-    # Se SOLD: [Dettagli] (1 per riga)
-    # Se ATTIVO: [Dettagli, Modifica], [Vendi, Elimina] (2 per riga)
+    # Se l'annuncio è venduto, mostriamo solo i Dettagli
     if status == 'SOLD':
+        builder.button(text="ℹ️ Dettagli", callback_data=f"view_details:{ad_id}")
         builder.adjust(1)
-    else:
-        builder.adjust(2, 2)
-        
+        return builder.as_markup()
+
+    # RIGA 1 (Layout a 3)
+    builder.button(text="ℹ️ Info", callback_data=f"view_details:{ad_id}")
+    builder.button(text="📋 Copia", callback_data=f"copy_ad_data:{ad_id}")
+    builder.button(text="✏️ Modifica", callback_data=f"edit_ad:{ad_id}")
+    
+    # RIGA 2 (Layout a 2)
+    builder.button(text="✅ Venduto", callback_data=f"sell_ad:{ad_id}")
+    builder.button(text="🗑️ Elimina", callback_data=f"delete_ad:{ad_id}")
+    
+    # Compressione: 3 bottoni sulla prima riga, 2 sulla seconda
+    builder.adjust(3, 2)        
     return builder.as_markup()
+
 def get_edit_menu_kb(ad_id: int) -> InlineKeyboardMarkup:
     """
     Builds an inline keyboard for editing the specific fields of an ad.
