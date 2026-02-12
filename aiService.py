@@ -79,12 +79,10 @@ async def ad_text_generator(product_description: str, foto_bytes: bytes = None) 
     - 1/3 frasi fluide (max ~350 caratteri).
     - Tono umano, accogliente ma onesto.
     - Indica condizioni reali senza minimizzare difetti.
-    - Includi una frase di invito tipo:
-        "Scrivimi per info o altre foto 😊"
-        oppure
-        "Contattami per qualsiasi dubbio o misura."
+    - Se elenchi dettagli o difetti, precedi la lista con un doppio a capo (\\n\\n).
+    - Includi una frase di invito tipo: "Scrivimi per info o altre foto 😊"
     - Emoji moderate (max 2).
-    - Concludi con 3/5 hashtag rilevanti (es. #nike #vintage #usato).
+    - Concludi SEMPRE con 3/5 hashtag rilevanti (es. #nike #vintage #usato), preceduti da un doppio a capo (\\n\\n).
 
     5. PREZZO:
     - Stima realistica in EURO come numero (es. 49.99).
@@ -103,23 +101,6 @@ async def ad_text_generator(product_description: str, foto_bytes: bytes = None) 
     - Usa titolo prudente.
     - Prezzo conservativo.
     - Mantieni comunque il JSON valido.
-    """
-    """
-    # Optimized prompt for the Italian market.
-    prompt_text = f
-    Act as an expert Italian online seller. Analyze the image and user text to create a perfect ad.
-    
-    1. **Visual Analysis (High Priority):**
-       - Identify the item, brand, model, color, and cosmetic condition.
-       - Look for any defects or included accessories.
-    
-    2. **User Text Analysis:** "{product_description}"
-       - Integrate this info only if it adds non-visible details (e.g., purchase year, reason for selling).
-       
-    3. **Required JSON Output:**
-       - `title` (string): A catchy title optimized for search algorithms (e.g., Vinted/Subito), max 60 chars.
-       - `description` (string): A fluid, persuasive, and honest paragraph. DO NOT use bullet points; write like a human. Use emojis moderately. ALWAYS append 3-5 relevant hashtags at the end (e.g., #vintage #nike #usato).
-       - `price` (float): A realistic estimate in Euros for the used item. CRITICAL: Output ONLY a single number, DO NOT include "€" or any other text.
     """
     # Build the content parts for the request
     parts = [types.Part.from_text(text=prompt_text)]

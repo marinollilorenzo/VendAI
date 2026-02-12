@@ -388,10 +388,34 @@ async def edit_field_save_new_value(message: Message, state: FSMContext):
 async def edit_ad_finish(callback: CallbackQuery, state: FSMContext):
     ad_id = int(callback.data.split(":")[1])
     await state.clear()
-    await callback.message.edit_text(f"✅ Modifiche all'annuncio #{ad_id} completate.")
-    await callback.message.answer("Sei nel menu principale.", reply_markup=kb.get_main_menu())
-    await callback.answer()
+    await callback.answer("✅ Modifiche salvate.")
+    await callback.message.delete()
+    await my_ads_handler(callback.message)
 
+# Aggiungi questo PRIMA o DOPO gli altri handler di vendita
+@router.callback_query(F.data.startswith("sell_ad:"))
+async def sell_ad_inline_start(callback: CallbackQuery, state: FSMContext):
+    """
+    Gestisce il click su 'Segna Venduto' direttamente dalla lista o dai dettagli.
+    Salta la selezione dell'annuncio e chiede subito il prezzo.
+    """
+    ad_id = int(callback.data.split(":")[1])
+    
+    # Recuperiamo l'ultima pubblicazione valida
+    pub_id = await db.get_latest_publication_id_for_ad(ad_id)
+    
+    if not pub_id:
+        await callback.answer("⚠️ Errore: Annuncio mai pubblicato o già venduto.", show_alert=True)
+        return
+
+    await state.update_data(pub_id_to_sell=pub_id)
+    await callback.message.edit_text(
+        f"💰 A che prezzo hai venduto l'annuncio #{ad_id}?\n\nScrivi la cifra (es. 25.00):",
+        reply_markup=None # O metti un tasto annulla
+    )
+    await state.set_state(AdSelling.WAITING_PRICE)
+    await callback.answer()
+    
 # --- 4. Mark as Sold FSM ---
 @router.message(F.text == "✅ Segna Venduto", StateFilter(None))
 async def start_sell_ad_wizard(message: Message, state: FSMContext):
@@ -495,68 +519,56 @@ async def universal_cancel_handler(callback: CallbackQuery, state: FSMContext):
 # --- 5. VISUALIZZAZIONE DETTAGLI ANNUNCIO (NUOVA SEZIONE) ---
 @router.callback_query(F.data.startswith("view_details:"))
 async def view_ad_details_handler(callback: CallbackQuery, state: FSMContext):
-    """
-    Displays the full details of a specific ad.
-    This handler assumes a "ℹ️ Dettagli" button exists in the ad management keyboard.
-    """
-    await state.clear()  # Clear any active state to prevent conflicts
+    await state.clear()
     ad_id = int(callback.data.split(":")[1])
 
     try:
         ad_details = await db.get_ad_details(ad_id, callback.from_user.id)
         if not ad_details:
-            await callback.answer("❌ Annuncio non trovato o non di tua proprietà.", show_alert=True)
+            await callback.answer("❌ Annuncio non trovato.", show_alert=True)
             return
 
-        def format_dt(dt_str: str | None) -> str:
-            """Safely formats a datetime string from the DB for display."""
-            if not dt_str: return "Non impostata"
+        def format_dt(dt_str):
+            if not dt_str: return None
             try:
-                return datetime.strptime(dt_str, '%Y-%m-%d %H:%M:%S').strftime('%d/%m/%Y alle %H:%M')
-            except (ValueError, TypeError):
-                return "Data non valida"
+                return datetime.strptime(dt_str, '%Y-%m-%d %H:%M:%S').strftime('%d/%m/%Y %H:%M')
+            except: return None
 
-        # Translation Map
-        status_map = {
-            'DRAFT': 'Bozza',
-            'SCHEDULED': 'Programmato',
-            'READY': 'Pronto',
-            'PUBLISHED': 'Pubblicato',
-            'SOLD': 'Venduto',
-            'DELETED': 'Eliminato'
-        }
-        
-        raw_status = ad_details.get('status_name', 'DRAFT')
-        status = status_map.get(raw_status, raw_status) # Fallback to raw if not found
-        
-        price = f"{ad_details.get('suggested_price'):.2f} €" if ad_details.get('suggested_price') is not None else "Non impostato"
+        status_map = {'DRAFT': 'Bozza', 'SCHEDULED': 'Programmato', 'SOLD': 'Venduto', 'DELETED': 'Eliminato'}
+        status = status_map.get(ad_details.get('status_name'), ad_details.get('status_name'))
+        price = f"{ad_details.get('suggested_price'):.2f} €" if ad_details.get('suggested_price') else "N/D"
 
+        # Costruzione Dinamica del Testo
         details_text = (
             f"ℹ️ **Scheda Annuncio #{ad_id}**\n\n"
-            f"**Titolo:**\n{ad_details.get('generated_title', 'N/A')}\n\n"
+            f"**Titolo:** {ad_details.get('generated_title', 'N/A')}\n\n"
             f"**Descrizione:**\n{ad_details.get('generated_description', 'N/A')}\n\n"
-            f"--- **Dettagli** ---\n"
-            f"**Stato:** `{status}`\n"
-            f"**Prezzo Suggerito:** {price}\n"
-            f"**Categoria:** {ad_details.get('category_name', 'N/A')}\n\n"
-            f"--- **Cronologia** ---\n"
-            f"**Creato il:** {format_dt(ad_details.get('created_datetime'))}\n"
-            f"**Programmato per il:** {format_dt(ad_details.get('scheduled_datetime'))}\n"
-            f"**Venduto il:** {format_dt(ad_details.get('sold_datetime'))}"
+            f"💰 **Prezzo:** {price}\n"
+            f"📊 **Stato:** `{status}`\n"
+            f"📂 **Categoria:** {ad_details.get('category_name', 'N/A')}\n"
         )
 
-        # We keep the same keyboard so the user can continue managing the ad
-        await callback.message.edit_text(
-            details_text,
-            reply_markup=callback.message.reply_markup,
-            parse_mode="Markdown"
-        )
+        # Sezione Venduto (Solo se venduto)
+        sold_date = format_dt(ad_details.get('sold_datetime'))
+        if sold_date:
+            details_text += f"\n🤝 **Venduto il:** {sold_date}\n"
+
+        # Sezione Programmazioni (Solo Future)
+        # Qui servirebbe una query extra per avere TUTTE le piattaforme, 
+        # ma per ora usiamo quella principale se c'è.
+        sched_date = format_dt(ad_details.get('scheduled_datetime'))
+        if sched_date and not sold_date:
+             # Controlliamo se è futura
+             dt_obj = datetime.strptime(ad_details.get('scheduled_datetime'), '%Y-%m-%d %H:%M:%S')
+             if dt_obj > datetime.now():
+                details_text += f"\n🗓️ **Programmato per:** {sched_date}\n"
+
+        await callback.message.edit_text(details_text, reply_markup=callback.message.reply_markup, parse_mode="Markdown")
         await callback.answer()
 
     except Exception as e:
-        logging.error(f"Error in view_ad_details_handler for ad {ad_id}: {e}")
-        await callback.answer("Si è verificato un errore nel recupero dei dettagli.", show_alert=True)
-
+        logging.error(f"Error viewing details: {e}")
+        await callback.answer("Errore recupero dettagli.")
 
 # --- 6. LOGICA PUBBLICAZIONE BOZZA (NUOVA SEZIONE) ---
 @router.callback_query(StateFilter(None), F.data.startswith("publish_ad:"))

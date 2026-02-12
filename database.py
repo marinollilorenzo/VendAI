@@ -250,12 +250,13 @@ class DatabaseManager:
         """
         Retrieves a paginated list of advertisements for a specific user,
         ordered by creation date. Includes details from the latest publication if available.
+        Excludes ads that are marked as DELETED.
         """
         query = """
         SELECT
             a.id_ad, a.generated_title, a.created_datetime,
             st.name AS status_name,
-            pa.scheduled_datetime, pa.publication_datetime
+            pa.scheduled_datetime, pa.publication_datetime, pa.deleted_datetime
         FROM ad AS a
         LEFT JOIN (
             SELECT *,
@@ -264,6 +265,7 @@ class DatabaseManager:
         ) AS pa ON a.id_ad = pa.id_ad AND pa.rn = 1
         LEFT JOIN status_type AS st ON pa.id_status_type = st.id_status_type
         WHERE a.id_telegram_user = ?
+        AND (st.name != 'DELETED' OR st.name IS NULL)
         ORDER BY a.created_datetime DESC
         LIMIT ? OFFSET ?
         """
