@@ -1,106 +1,110 @@
 import re
 from datetime import datetime, timedelta
 
+import re
+from datetime import datetime, timedelta
+
 def parse_date_text(text: str) -> datetime | None:
     """
-    Parses Italian natural language date/time expressions into a future datetime object.
-    Supports patterns like "Domani alle 15", "Tra 30 minuti", "Lunedì prossimo alle 10",
-    "Il 25 dicembre alle 12", handling common errors and always returning a future date.
+    Analizza testo naturale in italiano e restituisce un oggetto datetime futuro.
+    Corregge il bug "Lunedì = Oggi" proiettando sempre nel futuro.
     """
     now = datetime.now()
     text_lower = text.lower().strip()
     target_date = None
 
-    giorni_settimana_map = {
-        "lunedì": 0, "martedì": 1, "mercoledì": 2, "giovedì": 3,
-        "venerdì": 4, "sabato": 5, "domenica": 6
+    # Mappe
+    giorni_map = {
+        "lunedì": 0, "lunedi": 0, "martedì": 1, "martedi": 1, 
+        "mercoledì": 2, "mercoledi": 2, "giovedì": 3, "giovedi": 3,
+        "venerdì": 4, "venerdi": 4, "sabato": 5, "domenica": 6
     }
     mesi_map = {
-        "gennaio": 1, "febbraio": 2, "marzo": 3, "aprile": 4,
-        "maggio": 5, "giugno": 6, "luglio": 7, "agosto": 8,
-        "settembre": 9, "ottobre": 10, "novembre": 11, "dicembre": 12
+        "gennaio": 1, "febbraio": 2, "marzo": 3, "aprile": 4, "maggio": 5, "giugno": 6,
+        "luglio": 7, "agosto": 8, "settembre": 9, "ottobre": 10, "novembre": 11, "dicembre": 12
     }
 
-    # Helper to ensure target_date is in the future
-    def get_future_datetime(dt: datetime) -> datetime:
-        if dt > now:
-            return dt
-        # If the parsed datetime is in the past, assume next occurrence
-        # This logic needs to be careful for specific patterns, especially "today" scenarios.
-        # For week days or specific dates, if it's in the past, move to next year/week.
-        return dt
-
-    # Pattern 1: "tra X minuti/ore/giorni"
+    # 1. Pattern RELATIVO: "tra X minuti/ore/giorni"
+    # (Questo era perfetto, lo teniamo uguale)
     match = re.search(r"tra\s+(\d+)\s+(minut[oi]|or[ae]|giorn[oi])", text_lower)
     if match:
         quantita = int(match.group(1))
         unita = match.group(2)
         if unita.startswith("minut"):
-            target_date = now + timedelta(minutes=quantita)
+            return now + timedelta(minutes=quantita)
         elif unita.startswith("or"):
-            target_date = now + timedelta(hours=quantita)
-        else: # giorni
-            target_date = now + timedelta(days=quantita)
-        return target_date # Already in future
+            return now + timedelta(hours=quantita)
+        else:
+            return now + timedelta(days=quantita)
 
-    # Pattern 2: "domani [alle] HH[:MM]"
-    match = re.search(r"domani\s+(?:alle\s+)?(\d{1,2})(?:[:\.](\d{2}))?", text_lower)
+    # 2. Pattern DOMANI / DOPODOMANI
+    # Ho unito i due casi e reso l'orario opzionale (default 12:00)
+    match = re.search(r"(domani|dopodomani)(?:\s+alle\s+)?(\d{1,2})?(?:[:\.](\d{2}))?", text_lower)
     if match:
-        ora = int(match.group(1))
-        minuti = int(match.group(2) or 0)
-        if 0 <= ora <= 23 and 0 <= minuti <= 59:
-            domani = now.date() + timedelta(days=1)
-            parsed_dt = datetime(domani.year, domani.month, domani.day, ora, minuti)
-            return get_future_datetime(parsed_dt) # Ensure it's not past midnight of "tomorrow" due to timedelta
+        tipo = match.group(1)
+        ora = int(match.group(2)) if match.group(2) else 12 # Default mezzogiorno se non specifica ora
+        minuti = int(match.group(3) or 0)
+        
+        days_add = 2 if "dopo" in tipo else 1
+        target = now + timedelta(days=days_add)
+        return target.replace(hour=ora, minute=minuti, second=0, microsecond=0)
 
-    # Pattern 3: "giorno_settimana prossimo [alle] HH[:MM]" (e.g., "lunedì prossimo alle 10")
-    match = re.search(r"([a-zì]+)\s+prossim[oa]\s*(?:alle\s+)?(\d{1,2})(?:[:\.](\d{2}))?", text_lower)
+    # 3. Pattern GIORNO SETTIMANA (Es. "Lunedì alle 15" oppure "Lunedì prossimo")
+    # FIX: La parola "prossimo" ora è opzionale (?:...)?
+    giorni_regex = r"(" + "|".join(giorni_map.keys()) + r")" # Crea (lunedì|martedì|...)
+    match = re.search(giorni_regex + r"\s*(?:prossim[oa])?(?:\s+alle\s+)?(\d{1,2})?(?:[:\.](\d{2}))?", text_lower)
+    
     if match:
         nome_giorno = match.group(1)
-        ora = int(match.group(2))
+        ora = int(match.group(2)) if match.group(2) else 12
         minuti = int(match.group(3) or 0)
-        if nome_giorno in giorni_settimana_map and 0 <= ora <= 23 and 0 <= minuti <= 59:
-            giorno_target_num = giorni_settimana_map[nome_giorno]
-            days_until = (giorno_target_num - now.weekday() + 7) % 7
-            if days_until == 0: # If today, and time has passed, or if it's actually next week
-                temp_dt = datetime(now.year, now.month, now.day, ora, minuti)
-                if temp_dt <= now: # Time has passed today for this day, so it must be next week
-                    days_until = 7
+        
+        target_day_index = giorni_map[nome_giorno]
+        today_index = now.weekday()
+        
+        # Calcolo quanti giorni mancano
+        days_ahead = target_day_index - today_index
+        
+        # Se il giorno è oggi o è passato (in questa settimana), andiamo alla prossima
+        # Es: Oggi è Giovedì (3), scrivo Lunedì (0) -> days_ahead = -3 -> Diventa 4 (tra 4 giorni)
+        if days_ahead <= 0:
+            days_ahead += 7
             
-            future_date = now.date() + timedelta(days=days_until)
-            target_date = datetime(future_date.year, future_date.month, future_date.day, ora, minuti)
-            return target_date
+        # Caso speciale: Se scrivo "Lunedì" ed è Lunedì, ma l'ora è passata?
+        # Se days_ahead era 0 e l'abbiamo fatto diventare 7, va bene (settimana prox).
+        # Ma se l'utente intendeva "oggi più tardi", dobbiamo controllare l'ora.
+        # Qui per sicurezza, se uno scrive il giorno della settimana, assumiamo sempre futuro/prossimo.
+        
+        future_date = now + timedelta(days=days_ahead)
+        return future_date.replace(hour=ora, minute=minuti, second=0, microsecond=0)
 
-    # Pattern 4: "[il] GG mese [alle] HH[:MM]" (e.g., "il 25 dicembre alle 12", "25 marzo 10:30")
-    match = re.search(r"(?:il\s+)?(\d{1,2})\s+([a-z]+)\s*(?:alle\s+)?(\d{1,2})(?:[:\.](\d{2}))?", text_lower)
-    if match:
+    # 4. Pattern DATA SPECIFICA: "25 dicembre" o "il 25/12"
+    match = re.search(r"(?:il\s+)?(\d{1,2})\s+([a-z]+)\s*(?:alle\s+)?(\d{1,2})?(?:[:\.](\d{2}))?", text_lower)
+    if match and match.group(2) in mesi_map:
         giorno = int(match.group(1))
-        nome_mese = match.group(2)
-        ora = int(match.group(3))
+        mese = mesi_map[match.group(2)]
+        ora = int(match.group(3)) if match.group(3) else 12
         minuti = int(match.group(4) or 0)
-        if nome_mese in mesi_map and 1 <= giorno <= 31 and 0 <= ora <= 23 and 0 <= minuti <= 59:
-            mese = mesi_map[nome_mese]
-            anno = now.year
-            try:
-                parsed_dt = datetime(anno, mese, giorno, ora, minuti)
-                if parsed_dt < now: # If date is in the past, try next year
-                    parsed_dt = datetime(anno + 1, mese, giorno, ora, minuti)
-                return parsed_dt
-            except ValueError:
-                pass # Invalid date (e.g., Feb 30), continue to next pattern
+        
+        try:
+            parsed_dt = datetime(now.year, mese, giorno, ora, minuti)
+            # Se la data è passata (es. scrivo "20 Gennaio" ed è Marzo), metti anno prossimo
+            if parsed_dt < now:
+                parsed_dt = parsed_dt.replace(year=now.year + 1)
+            return parsed_dt
+        except ValueError:
+            pass # Data non valida (es. 30 febbraio)
 
-    # Pattern 5: "alle HH[:MM]" (today or tomorrow)
+    # 5. Pattern SOLO ORA: "alle 15" (Oggi o Domani)
     match = re.search(r"alle\s+(\d{1,2})(?:[:\.](\d{2}))?", text_lower)
     if match:
         ora = int(match.group(1))
         minuti = int(match.group(2) or 0)
-        if 0 <= ora <= 23 and 0 <= minuti <= 59:
-            temp_dt_today = datetime(now.year, now.month, now.day, ora, minuti)
-            if temp_dt_today > now: # If time is in the future today
-                return temp_dt_today
-            else: # If time has passed today, assume tomorrow
-                domani = now.date() + timedelta(days=1)
-                return datetime(domani.year, domani.month, domani.day, ora, minuti)
+        
+        target = now.replace(hour=ora, minute=minuti, second=0, microsecond=0)
+        if target <= now: # Se l'ora è passata, intendo domani
+            target += timedelta(days=1)
+        return target
 
     return None
 

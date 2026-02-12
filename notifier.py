@@ -1,97 +1,153 @@
-import os
 import asyncio
-import telegram
-import datetime
-from dateutil.parser import isoparse
+import logging
+import os
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from database import ottieni_annunci_attivi, aggiorna_stato_annuncio
+from aiogram import Bot
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
+# Riutilizziamo il tuo DatabaseManager esistente
+from database import DatabaseManager
+
+# Configurazione Log
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("Notifier")
+
+# Carica variabili d'ambiente
 load_dotenv()
-TOKEN = os.getenv("TOKEN")
+TOKEN = os.getenv("BOT_TOKEN") 
 
-async def invia_notifica(bot, chat_id, testo_notifica):
-    """Funzione generica per inviare una notifica."""
-    try:
-        await bot.send_message(
-            chat_id=chat_id, 
-            text=testo_notifica, 
-            parse_mode='Markdown'
-        )
-        return True
-    except Exception as e:
-        print(f"Errore nell'invio della notifica: {e}")
-        return False
+if not TOKEN:
+    logger.error("❌ TOKEN non trovato nel file .env!")
+    exit(1)
 
-async def formatta_messaggio(annuncio, tipo_notifica="finale"):
-    """Prepara il testo del messaggio da inviare."""
-    titolo = annuncio['titolo_generato']
-    descrizione = annuncio['descrizione_generata']
-    prezzo = annuncio['prezzo_suggerito']
+bot = Bot(token=TOKEN)
+db = DatabaseManager()
+
+def get_publish_kb(id_pub):
+    """Crea il bottone per la pubblicazione immediata"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚀 Pubblica Ora", callback_data=f"publish_now:{id_pub}")]
+    ])
+    return keyboard
+
+async def check_and_notify():
+    logger.info("🔍 Controllo scadenze...")
     
-    if tipo_notifica == "pre-notifica":
-        header = f"⏰ **PREAVVISO, MANCANO MENO DI 30 MINUTI** ⏰"
-        footer = f"Preparati a pubblicare l'annuncio (ID: #{annuncio['id']:04d}) che mancano meno di 30 minuti!"
-    else: # "finale"
-        header = f"🔔 **È ORA DI PUBBLICARE!** 🔔"
-        footer = f"Ecco l'annuncio programmato (ID: #{annuncio['id']:04d})."
-
-    return (
-        f"{header}\n\n"
-        f"**Titolo:**\n{titolo}\n\n"
-        f"**Descrizione:**\n{descrizione}\n\n"
-        f"**Prezzo:**\n{prezzo}€\n\n"
-        f"---\n{footer}"
-    )
-
-async def main_loop():
-    """Il ciclo principale del guardiano, ora con logica a 2 fasi."""
-    if not TOKEN:
-        print("Errore: TOKEN non trovato nel file .env.")
+    try:
+        st_scheduled = (await db._fetch_one("SELECT id_status_type FROM status_type WHERE name='SCHEDULED'"))['id_status_type']
+        st_pre = (await db._fetch_one("SELECT id_status_type FROM status_type WHERE name='NOTIFIED_PRE'"))['id_status_type']
+        st_final = (await db._fetch_one("SELECT id_status_type FROM status_type WHERE name='NOTIFIED_FINAL'"))['id_status_type']
+    except TypeError:
+        logger.error("❌ Stati DB mancanti. Esegui INSERT per NOTIFIED_FINAL!")
         return
 
-    bot = telegram.Bot(token=TOKEN)
-    print("Avvio del 'Guardiano Notifiche'")
+    now = datetime.now()
     
-    while True:
-        now = datetime.datetime.now()        
+    # =========================================================================
+    # FASE 1: PRE-NOTIFICA (Mancano 30 minuti)
+    # =========================================================================
+    warning_threshold = now + timedelta(minutes=30)
+    
+    query_warn = """
+    SELECT pa.id_publication_ad, pa.id_ad, pa.scheduled_datetime, p.name as platform_name, a.id_telegram_user, a.generated_title
+    FROM publication_ad pa
+    JOIN ad a ON pa.id_ad = a.id_ad
+    JOIN platform p ON pa.id_platform = p.id_platform
+    WHERE pa.id_status_type = ? 
+    AND pa.deleted_datetime IS NULL
+    AND pa.scheduled_datetime <= ?
+    """
+    
+    pending_warnings = await db._fetch_all(query_warn, (st_scheduled, warning_threshold.strftime("%Y-%m-%d %H:%M:%S")))
+    
+    for pub in pending_warnings:
         try:
-            annunci_attivi = ottieni_annunci_attivi()
+            sched_time = datetime.strptime(pub['scheduled_datetime'], "%Y-%m-%d %H:%M:%S")
+            minutes_left = int((sched_time - now).total_seconds() / 60)
+            if minutes_left < 0: minutes_left = 0
             
-            if not annunci_attivi:
-                print(".")
+            msg = (
+                f"⏰ **PREAVVISO: -{minutes_left} min**\n"
+                f"📦 Annuncio: {pub['generated_title']}\n"
+                f"🌐 Piattaforma: **{pub['platform_name']}**\n\n"
+                f"Vuoi anticipare e pubblicare subito?"
+            )
             
-            for annuncio in annunci_attivi:
-                chat_id_destinatario = annuncio['telegram_user_id']
-                data_programmata = isoparse(annuncio['data_pubblicazione'])                
-                # --- LOGICA FASE 1: PRE-NOTIFICA (30 MIN) ---
-                if annuncio['id_stato'] == 2: # Se è 'programmato'
-                    warning_time = data_programmata - datetime.timedelta(minutes=30)
-                    
-                    if now >= warning_time:
-                        print(f"/")
-                        messaggio = await formatta_messaggio(annuncio, "pre-notifica")
-                        successo = await invia_notifica(bot, chat_id_destinatario, messaggio)
-                        
-                        if successo:
-                            # Aggiorna lo stato a 3 ('pre-notificato')
-                            aggiorna_stato_annuncio(annuncio['id'], 3)
-                
-                # --- LOGICA FASE 2: NOTIFICA FINALE ---
-                if annuncio['id_stato'] == 3: # Se è 'pre-notificato'
-                    
-                    if now >= data_programmata:
-                        print(f"|")
-                        messaggio = await formatta_messaggio(annuncio, "finale")
-                        successo = await invia_notifica(bot, chat_id_destinatario, messaggio)
-                        
-                        if successo:
-                            # Aggiorna lo stato a 4 ('notificato')
-                            aggiorna_stato_annuncio(annuncio['id'], 4)
-
+            await bot.send_message(
+                pub['id_telegram_user'], 
+                msg, 
+                parse_mode="Markdown",
+                reply_markup=get_publish_kb(pub['id_publication_ad'])
+            )
+            
+            # Aggiorna a NOTIFIED_PRE
+            await db._execute_query(
+                "UPDATE publication_ad SET id_status_type = ? WHERE id_publication_ad = ?",
+                (st_pre, pub['id_publication_ad'])
+            )
+            logger.info(f"✅ Pre-avviso inviato per Pub #{pub['id_publication_ad']}")
+            
         except Exception as e:
-            print(f"\n[{datetime.datetime.now()}] ERRORE CRITICO nel guardiano: {e}")
-        # Aspetta 60 secondi prima del prossimo controllo
-        await asyncio.sleep(60)
+            logger.error(f"Errore warning {pub['id_publication_ad']}: {e}")
+
+    # =========================================================================
+    # FASE 2: NOTIFICA FINALE SOFT (È ORA)
+    # =========================================================================
+    # Cerchiamo annunci SCHEDULED o NOTIFIED_PRE che sono scaduti
+    query_final = """
+    SELECT pa.id_publication_ad, pa.id_ad, a.id_telegram_user, a.generated_title, p.name as platform_name
+    FROM publication_ad pa
+    JOIN ad a ON pa.id_ad = a.id_ad
+    JOIN platform p ON pa.id_platform = p.id_platform
+    WHERE pa.id_status_type IN (?, ?) 
+    AND pa.deleted_datetime IS NULL
+    AND pa.scheduled_datetime <= ?
+    """
+    
+    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+    ready_to_publish = await db._fetch_all(query_final, (st_scheduled, st_pre, now_str))
+    
+    for pub in ready_to_publish:
+        try:
+            msg = (
+                f"🔔 **È ORA DI PUBBLICARE!** 🔔\n"
+                f"Il momento programmato è arrivato.\n\n"
+                f"📦 {pub['generated_title']}\n"
+                f"🌐 Su: **{pub['platform_name']}**\n\n"
+                f"Premi il tasto qui sotto quando sei pronto per ricevere i testi 👇"
+            )
+            
+            await bot.send_message(
+                pub['id_telegram_user'],
+                msg,
+                parse_mode="Markdown",
+                reply_markup=get_publish_kb(pub['id_publication_ad'])
+            )
+            
+            # Aggiorna a NOTIFIED_FINAL (così il loop non lo ripesca più)
+            await db._execute_query(
+                "UPDATE publication_ad SET id_status_type = ? WHERE id_publication_ad = ?",
+                (st_final, pub['id_publication_ad'])
+            )
+            logger.info(f"🚀 Notifica Soft inviata per Pub #{pub['id_publication_ad']}")
+            
+        except Exception as e:
+            logger.error(f"Errore final notify {pub['id_publication_ad']}: {e}")
+
+async def main_loop():
+    logger.info("🟢 Guardiano Notifiche Avviato")
+    try:
+        while True:
+            await check_and_notify()
+            await asyncio.sleep(60)
+    except KeyboardInterrupt:
+        logger.info("🔴 Guardiano fermato manualmente")
+    finally:
+        await bot.session.close()
 
 if __name__ == "__main__":
-    asyncio.run(main_loop())
+    try:
+        asyncio.run(main_loop())
+    except (KeyboardInterrupt, SystemExit):
+        pass

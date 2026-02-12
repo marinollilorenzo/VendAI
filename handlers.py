@@ -880,7 +880,6 @@ async def view_ad_details_handler(callback: CallbackQuery, state: FSMContext):
         status = status_map.get(ad_details.get('status_name'), ad_details.get('status_name'))
         price = f"{ad_details.get('suggested_price'):.2f} €" if ad_details.get('suggested_price') else "N/D"
 
-        # Costruzione Dinamica del Testo
         details_text = (
             f"ℹ️ **Scheda Annuncio #{ad_id}**\n\n"
             f"**Titolo:** {ad_details.get('generated_title', 'N/A')}\n\n"
@@ -890,29 +889,34 @@ async def view_ad_details_handler(callback: CallbackQuery, state: FSMContext):
             f"📂 **Categoria:** {ad_details.get('category_name', 'N/A')}\n"
         )
 
-        # Sezione Venduto (Solo se venduto)
+        # Sezione Venduto
         sold_date = format_dt(ad_details.get('sold_datetime'))
         if sold_date:
             details_text += f"\n🤝 **Venduto il:** {sold_date}\n"
 
-        # Sezione Programmazioni (Tutte le future)
+        # --- FIX VISUALIZZAZIONE STORICO ---
         pub_list = await db.get_ad_publications(ad_id)
-        future_pubs = []
+        history_pubs = []
         now = datetime.now()
         
-        for pub in pub_list:
-            # pub is {'platform': ..., 'date': 'YYYY-MM-DD HH:MM'} from get_ad_publications
-            # BUT get_ad_publications returns formatted date string in 'YYYY-MM-DD HH:MM'
-            # Let's parse it back to check if it's future
-            try:
-                dt_obj = datetime.strptime(pub['date'], '%Y-%m-%d %H:%M')
-                if dt_obj > now:
-                    future_pubs.append(f"🗓️ {pub['platform']}: {pub['date']}")
-            except ValueError:
-                pass
-
-        if future_pubs and not sold_date:
-            details_text += "\n**Programmazioni Future:**\n" + "\n".join(future_pubs) + "\n"
+        if pub_list:
+            details_text += "\n**📅 Calendario Pubblicazioni:**\n"
+            for pub in pub_list:
+                try:
+                    # pub['date'] arriva dal DB come stringa 'YYYY-MM-DD HH:MM' (formattata nella query)
+                    # La parsiamo per confrontarla
+                    dt_obj = datetime.strptime(pub['date'], '%Y-%m-%d %H:%M')
+                    
+                    if dt_obj < now:
+                        # Passato
+                        history_pubs.append(f"✅ Pubblicato: {pub['platform']} ({pub['date']})")
+                    else:
+                        # Futuro
+                        history_pubs.append(f"🗓️ Programmato: {pub['platform']} ({pub['date']})")
+                except ValueError:
+                    continue
+            
+            details_text += "\n".join(history_pubs) + "\n"
 
         await callback.message.edit_text(details_text, reply_markup=callback.message.reply_markup, parse_mode="Markdown")
         await callback.answer()
@@ -920,7 +924,7 @@ async def view_ad_details_handler(callback: CallbackQuery, state: FSMContext):
     except Exception as e:
         logging.error(f"Error viewing details: {e}")
         await callback.answer("Errore recupero dettagli.")
-
+        
 @router.callback_query(F.data.startswith("copy_ad_data:"))
 async def copy_ad_data_handler(callback: CallbackQuery, state: FSMContext):
     """
@@ -1002,7 +1006,89 @@ async def copy_ad_data_handler(callback: CallbackQuery, state: FSMContext):
         logging.error(f"Errore Copia Rapida: {e}")
         # Non usiamo callback.answer qui perché potrebbe essere scaduto
         await callback.message.answer("⚠️ Errore nel recupero dati.")
+
+@router.callback_query(F.data.startswith("publish_now:"))
+async def publish_now_handler(callback: CallbackQuery, state: FSMContext):
+    """
+    Gestisce il click su 'Pubblica Ora' dalla notifica.
+    1. Invia i 4 messaggi per il copia incolla.
+    2. Segna la pubblicazione come PUBLISHED nel DB.
+    3. Aggiorna la data di pubblicazione a ADESSO.
+    """
+    # Rispondiamo subito per evitare timeout
+    try:
+        await callback.answer("🚀 Carico dati pubblicazione...")
+    except: pass
+
+    pub_id = int(callback.data.split(":")[1])
+    user_id = callback.from_user.id
+    
+    try:
+        # 1. Recuperiamo i dettagli COMPLETI usando pub_id
+        # Dobbiamo fare una query join perché get_ad_details usa id_ad
+        query = """
+        SELECT a.generated_title, a.generated_description, a.suggested_price, 
+               c.name as category_name, p.name as platform_name, a.id_ad
+        FROM publication_ad pa
+        JOIN ad a ON pa.id_ad = a.id_ad
+        JOIN platform p ON pa.id_platform = p.id_platform
+        LEFT JOIN category c ON a.id_category = c.id_category
+        WHERE pa.id_publication_ad = ? AND a.id_telegram_user = ?
+        """
+        data = await db._fetch_one(query, (pub_id, user_id))
         
+        if not data:
+            await callback.message.answer("❌ Errore: Pubblicazione non trovata.")
+            return
+
+        # 2. Aggiornamento Stato nel DB (PUBLISHED + Data Runtime)
+        st_published = (await db._fetch_one("SELECT id_status_type FROM status_type WHERE name='PUBLISHED'"))['id_status_type']
+        now_iso = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        await db._execute_query(
+            """
+            UPDATE publication_ad 
+            SET id_status_type = ?, publication_datetime = ? 
+            WHERE id_publication_ad = ?
+            """,
+            (st_published, now_iso, pub_id)
+        )
+
+        # 3. Invio Messaggi (Stile Copia Rapida)
+        titolo = data['generated_title']
+        descrizione = data['generated_description']
+        prezzo = f"{data['suggested_price']:.2f}".replace(',', '.')
+        
+        # Header
+        await callback.message.answer(
+            f"🚀 **PUBBLICAZIONE AVVIATA!**\n"
+            f"📂 {data['category_name']} | 🌐 {data['platform_name']}\n"
+            "───────────────\n"
+            "Copia i dati qui sotto 👇"
+        )
+        await asyncio.sleep(0.1)
+        await callback.message.answer(titolo)
+        await asyncio.sleep(0.1)
+        await callback.message.answer(descrizione)
+        await asyncio.sleep(0.1)
+        await callback.message.answer(prezzo)
+
+        # 4. Feedback visivo sul messaggio originale della notifica
+        # Modifichiamo il messaggio "È ora di pubblicare" in "✅ Pubblicato"
+        try:
+            await callback.message.edit_text(
+                f"✅ **PUBBLICATO**\n"
+                f"Annuncio #{data['id_ad']} su {data['platform_name']}\n"
+                f"📅 {datetime.now().strftime('%d/%m %H:%M')}",
+                reply_markup=None
+            )
+        except:
+            pass # Se non riesce a modificare (messaggio vecchio), pazienza
+
+    except Exception as e:
+        logging.error(f"Errore Publish Now: {e}")
+        await callback.message.answer("⚠️ Errore durante la pubblicazione.")
+
 # --- 6. LOGICA PUBBLICAZIONE BOZZA (NUOVA SEZIONE) ---
 @router.callback_query(StateFilter(None), F.data.startswith("publish_ad:"))
 async def publish_ad_start(callback: CallbackQuery, state: FSMContext):
