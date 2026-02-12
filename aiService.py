@@ -39,8 +39,75 @@ async def ad_text_generator(product_description: str, foto_bytes: bytes = None) 
             "price": 0.0
         }
 
-    # Optimized prompt for the Italian market.
     prompt_text = f"""
+    Sei un venditore online italiano esperto, con esperienza su Vinted, Subito ed eBay. 
+    Sei bravo a scrivere annunci chiari, sinceri e coinvolgenti, ottimizzati per la ricerca e per convertire visite in messaggi. 
+    Il tuo stile è amichevole ma professionale, mai esagerato o artificiale.
+
+    Riceverai:
+    - una FOTO (da analizzare visivamente)
+    - un TESTO UTENTE {product_description} (potrebbe essere disordinato, incompleto o generico)
+
+    Obiettivo: generare SOLO questo JSON valido (nessun testo fuori dal JSON):
+
+    {
+    "title": "string (<=60 chars)",
+    "description": "string (1-3 frasi, tono amichevole e professionale; emoji moderate; 3-5 hashtag alla fine)",
+    "price": float
+    }
+
+    Regole:
+
+    1. ANALISI VISIVA (priorità alta):
+    - Identifica oggetto, marca, modello, colore, versione, eventuale taglia.
+    - Valuta condizioni reali (ottime, buone, segni di usura, difetti visibili).
+    - Nota accessori inclusi o assenti.
+    - Non inventare informazioni non visibili.
+
+    2. ANALISI TESTO UTENTE:
+    - Il testo può essere impreciso o poco chiaro.
+    - Estrai tutte le informazioni utili (anno acquisto, uso, misure, motivazione vendita).
+    - Integra solo dettagli che non sono già evidenti dalla foto.
+    - Se il testo contraddice la foto, fidati della foto.
+
+    3. TITOLO:
+    - Ottimizzato SEO marketplace (Vinted/Subito).
+    - Max 60 caratteri.
+    - Niente emoji nel titolo.
+    - Inserisci brand/modello se certo.
+
+    4. DESCRIZIONE:
+    - 1/3 frasi fluide (max ~350 caratteri).
+    - Tono umano, accogliente ma onesto.
+    - Indica condizioni reali senza minimizzare difetti.
+    - Includi una frase di invito tipo:
+        "Scrivimi per info o altre foto 😊"
+        oppure
+        "Contattami per qualsiasi dubbio o misura."
+    - Emoji moderate (max 2).
+    - Concludi con 3/5 hashtag rilevanti (es. #nike #vintage #usato).
+
+    5. PREZZO:
+    - Stima realistica in EURO come numero (es. 49.99).
+    - Non includere simboli o testo.
+    - Arrotondamento commerciale (.99 / .90).
+    - Se incertezza alta, prezzo leggermente prudente per favorire la vendita.
+    - Non sovrastimare articoli usati.
+
+    6. Non inserire:
+    - dati personali
+    - numeri di telefono
+    - link esterni
+    - testo fuori dal JSON
+
+    7. Se la foto è poco chiara:
+    - Usa titolo prudente.
+    - Prezzo conservativo.
+    - Mantieni comunque il JSON valido.
+    """
+    """
+    # Optimized prompt for the Italian market.
+    prompt_text = f
     Act as an expert Italian online seller. Analyze the image and user text to create a perfect ad.
     
     1. **Visual Analysis (High Priority):**
@@ -52,10 +119,9 @@ async def ad_text_generator(product_description: str, foto_bytes: bytes = None) 
        
     3. **Required JSON Output:**
        - `title` (string): A catchy title optimized for search algorithms (e.g., Vinted/Subito), max 60 chars.
-       - `description` (string): A fluid, persuasive, and honest paragraph. DO NOT use bullet points; write like a human. Use emojis moderately.
+       - `description` (string): A fluid, persuasive, and honest paragraph. DO NOT use bullet points; write like a human. Use emojis moderately. ALWAYS append 3-5 relevant hashtags at the end (e.g., #vintage #nike #usato).
        - `price` (float): A realistic estimate in Euros for the used item. CRITICAL: Output ONLY a single number, DO NOT include "€" or any other text.
     """
-
     # Build the content parts for the request
     parts = [types.Part.from_text(text=prompt_text)]
     if foto_bytes:
