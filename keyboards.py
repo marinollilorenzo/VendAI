@@ -118,6 +118,27 @@ def get_platforms_kb(platforms: List[Dict[str, Union[str, int]]]) -> InlineKeybo
 
     return builder.as_markup()
 
+def get_multi_platform_kb(platforms: List[Dict[str, Union[str, int]]]) -> InlineKeyboardMarkup:
+    """
+    Builds a dynamic grid of platforms for multi-selection.
+    It includes a 'Finish' button to confirm the selection and proceed.
+    """
+    builder = InlineKeyboardBuilder()
+    for platform in platforms:
+        builder.button(text=platform['name'], callback_data=f"platform:{platform['id_platform']}")
+    
+    builder.button(text="✅ Fine, salva tutto", callback_data="finish_platform_selection")
+    
+    # Adjust layout to have 2 columns for platforms and 1 column for the finish button
+    num_platforms = len(platforms)
+    adjust_params = [2] * (num_platforms // 2)
+    if num_platforms % 2 != 0:
+        adjust_params.append(1)
+    adjust_params.append(1) # For the finish button
+    builder.adjust(*adjust_params)
+
+    return builder.as_markup()
+
 def get_profile_kb() -> InlineKeyboardMarkup:
     """
     Builds the inline keyboard for the user profile section.
@@ -139,5 +160,7 @@ def get_confirmation_kb(action: str, target_id: int) -> InlineKeyboardMarkup:
     """
     builder = InlineKeyboardBuilder()
     builder.button(text="✅ Conferma", callback_data=f"confirm_{action}:{target_id}")
+    builder.button(text="✏️ Modifica", callback_data=f"edit_creation_start")
     builder.button(text="❌ Annulla", callback_data=f"cancel_{action}:{target_id}")
+    builder.adjust(2, 1)
     return builder.as_markup()

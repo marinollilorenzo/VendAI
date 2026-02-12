@@ -5,8 +5,7 @@ from aiogram import Router, F, types
 from aiogram.filters import CommandStart, StateFilter, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, CallbackQuery, BufferedInputFile
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import Message, CallbackQuery, BufferedInputFile, InlineKeyboardBuilder
 import matplotlib.pyplot as plt
 import seaborn as sns
 from datetime import datetime
@@ -26,9 +25,10 @@ db = DatabaseManager()
 class AdCreation(StatesGroup):
     WAITING_PHOTO = State()
     WAITING_CONFIRM = State()
+    WAITING_MANUAL_TEXT = State() # New state for manual edit
     WAITING_CATEGORY = State()
-    WAITING_PLATFORM = State()
-    WAITING_DATE = State()
+    WAITING_PLATFORM_SELECTION = State() # Renamed/New
+    WAITING_DATE_INPUT = State() # Renamed/New
 
 class AdEditing(StatesGroup):
     CHOOSING_FIELD = State()
@@ -181,8 +181,29 @@ async def ad_creation_photo_handler(message: Message, state: FSMContext):
         await processing_msg.edit_text("Si è verificato un errore critico. Riprova.")
         await state.clear()
 
+# Handler for Manual Edit (Creation Phase)
+@router.callback_query(AdCreation.WAITING_CONFIRM, F.data == "edit_creation_start")
+async def ad_creation_manual_edit_start(callback: CallbackQuery, state: FSMContext):
+    await callback.message.answer("✏️ Inviami la nuova descrizione completa per l'annuncio.")
+    await state.set_state(AdCreation.WAITING_MANUAL_TEXT)
+    await callback.answer()
+
+@router.message(AdCreation.WAITING_MANUAL_TEXT, F.text)
+async def ad_creation_manual_edit_save(message: Message, state: FSMContext):
+    # Update description, keep title/price from previous draft or ask? 
+    # Simpler: just update description for now as it's the most common edit.
+    await state.update_data(draft_description=message.text)
+    data = await state.get_data()
+    
+    preview_text = f"✨ **Anteprima Aggiornata** ✨\n\n**Titolo:**\n{data.get('draft_title')}\n\n**Descrizione:**\n{data.get('draft_description')}\n\n**Prezzo Suggerito:** {data.get('draft_price')} €"
+    await message.answer(preview_text, parse_mode="Markdown", reply_markup=kb.get_confirmation_kb("creation", 0))
+    await state.set_state(AdCreation.WAITING_CONFIRM)
+
 @router.callback_query(AdCreation.WAITING_CONFIRM, F.data.startswith("confirm_creation"))
 async def ad_creation_ask_category(callback: CallbackQuery, state: FSMContext):
+    # Init schedule list
+    await state.update_data(schedule_list=[])
+    
     await callback.message.edit_text("✅ Testo confermato! Ora scegli una categoria:", reply_markup=None)
     categories = await db.get_all_categories()
     await callback.message.answer("Scegli una categoria:", reply_markup=kb.get_categories_kb(categories))
@@ -190,57 +211,105 @@ async def ad_creation_ask_category(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 @router.callback_query(AdCreation.WAITING_CATEGORY, F.data.startswith("cat:"))
-async def ad_creation_ask_platform(callback: CallbackQuery, state: FSMContext):
+async def ad_creation_start_platform_loop(callback: CallbackQuery, state: FSMContext):
     await state.update_data(category_id=int(callback.data.split(":")[1]))
-    await callback.message.edit_text("✅ Categoria scelta! Ora scegli una piattaforma:", reply_markup=None)
+    await callback.message.edit_text("✅ Categoria scelta!", reply_markup=None)
+    
+    # Start Platform Loop
     platforms = await db.get_all_platforms()
-    await callback.message.answer("Scegli la piattaforma:", reply_markup=kb.get_platforms_kb(platforms))
-    await state.set_state(AdCreation.WAITING_PLATFORM)
+    await callback.message.answer(
+        "Su quali piattaforme vuoi pubblicare?\nSeleziona una piattaforma, imposta la data, e ripeti per aggiungerne altre.",
+        reply_markup=kb.get_multi_platform_kb(platforms)
+    )
+    await state.set_state(AdCreation.WAITING_PLATFORM_SELECTION)
     await callback.answer()
 
-@router.callback_query(AdCreation.WAITING_PLATFORM, F.data.startswith("platform:"))
-async def ad_creation_ask_date(callback: CallbackQuery, state: FSMContext):
-    await state.update_data(platform_id=int(callback.data.split(":")[1]))
-    await callback.message.edit_text("✅ Piattaforma scelta! Quando vuoi pubblicare?", reply_markup=None)
-    await callback.message.answer("Scrivimi una data (es. 'domani alle 15:00') o salta per salvare in bozza.")
-    await state.set_state(AdCreation.WAITING_DATE)
+@router.callback_query(AdCreation.WAITING_PLATFORM_SELECTION, F.data.startswith("platform:"))
+async def ad_creation_platform_selected(callback: CallbackQuery, state: FSMContext):
+    platform_id = int(callback.data.split(":")[1])
+    
+    await state.update_data(current_platform_id=platform_id)
+    await callback.message.edit_text(
+        f"📅 Quando vuoi pubblicare su questa piattaforma?\n\n"
+        "Scrivimi una data e ora (es. 'domani alle 18:30').\n"
+        "💡 **Orari consigliati:** 10:00-12:00 o 18:00-21:00.",
+        reply_markup=None
+    )
+    await state.set_state(AdCreation.WAITING_DATE_INPUT)
     await callback.answer()
 
-@router.callback_query(AdCreation.WAITING_PLATFORM, F.data == "skip_platform")
-async def ad_creation_save_as_draft(callback: CallbackQuery, state: FSMContext):
-    await callback.message.edit_text("OK, salvo l'annuncio in bozza.", reply_markup=None)
-    await save_ad_and_publication(callback.message, state, is_draft=True)
-    await callback.answer()
-
-@router.message(AdCreation.WAITING_DATE, F.text)
-async def ad_creation_save_with_date(message: Message, state: FSMContext):
+@router.message(AdCreation.WAITING_DATE_INPUT, F.text)
+async def ad_creation_date_selected(message: Message, state: FSMContext):
     parsed_date = parse_date_text(message.text)
     if not parsed_date:
-        await message.answer("Non ho capito la data. 😅 Riprova (es. 'domani alle 15:00').")
+        await message.answer("⚠️ Data non valida. Riprova (es. 'domani 18:00').")
         return
-    await save_ad_and_publication(message, state, scheduled_datetime=parsed_date)
 
-async def save_ad_and_publication(message: Message, state: FSMContext, scheduled_datetime=None, is_draft=False):
+    data = await state.get_data()
+    schedule_list = data.get('schedule_list', [])
+    current_platform_id = data.get('current_platform_id')
+    
+    # Add to list
+    schedule_list.append({'platform_id': current_platform_id, 'date': parsed_date})
+    await state.update_data(schedule_list=schedule_list)
+    
+    # Show Platform Menu Again
+    platforms = await db.get_all_platforms()
+    await message.answer(
+        f"✅ Programmato per il {parsed_date.strftime('%d/%m %H:%M')}.\n\n"
+        "Vuoi aggiungere un'altra piattaforma o concludere?",
+        reply_markup=kb.get_multi_platform_kb(platforms)
+    )
+    await state.set_state(AdCreation.WAITING_PLATFORM_SELECTION)
+
+@router.callback_query(AdCreation.WAITING_PLATFORM_SELECTION, F.data == "finish_platform_selection")
+async def ad_creation_finish(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    schedule_list = data.get('schedule_list', [])
+    
+    if not schedule_list:
+        await callback.answer("⚠️ Seleziona almeno una piattaforma!", show_alert=True)
+        return
+
+    await callback.message.edit_text("💾 Salvataggio in corso...", reply_markup=None)
+    
     try:
-        data = await state.get_data()
+        # 1. Save Ad
         ad_id = await db.add_ad(
-            id_telegram_user=message.chat.id, input_description=data['input_description'],
-            generated_title=data['draft_title'], generated_description=data['draft_description'],
-            suggested_price=data['draft_price'], id_category=data.get('category_id')
+            id_telegram_user=callback.from_user.id,
+            input_description=data['input_description'],
+            generated_title=data['draft_title'],
+            generated_description=data['draft_description'],
+            suggested_price=data['draft_price'],
+            id_category=data.get('category_id')
         )
-        status_name = 'DRAFT' if is_draft else 'SCHEDULED'
-        status_id = await db.get_status_id_by_name(status_name)
-        await db.add_publication_entry(
-            id_ad=ad_id, id_platform=data.get('platform_id'), 
-            id_status_type=status_id, scheduled_datetime=scheduled_datetime
+        
+        # 2. Save Publications
+        scheduled_status_id = await db.get_status_id_by_name('SCHEDULED')
+        
+        for item in schedule_list:
+            await db.add_publication_entry(
+                id_ad=ad_id,
+                id_platform=item['platform_id'],
+                id_status_type=scheduled_status_id,
+                scheduled_datetime=item['date']
+            )
+            
+        await callback.message.answer(
+            f"🎉 **Annuncio #{ad_id} Creato con Successo!**\n"
+            f"Programmato su {len(schedule_list)} piattaforme.\n"
+            "Lo trovi in '🛍️ I Miei Annunci'.",
+            reply_markup=kb.get_main_menu(),
+            parse_mode="Markdown"
         )
-        final_message = f"✅ Annuncio #{ad_id} salvato in bozza!" if is_draft else f"✅ Annuncio #{ad_id} programmato per il {scheduled_datetime.strftime('%d/%m/%Y alle %H:%M')}!"
-        await message.answer(final_message, reply_markup=kb.get_main_menu())
+        
     except Exception as e:
-        logging.error(f"Failed to save ad and publication: {e}")
-        await message.answer("Si è verificato un errore finale nel salvataggio.")
+        logging.error(f"Error finalizing ad creation: {e}")
+        await callback.message.answer("❌ Errore durante il salvataggio. Riprova.")
     finally:
         await state.clear()
+        await callback.answer()
+
 
 # --- 2. Ad Listing and Management ---
 @router.message(F.text == "🛍️ I Miei Annunci", StateFilter(None))
@@ -251,9 +320,19 @@ async def my_ads_handler(message: Message):
         return
     await message.answer(f"Ecco i tuoi {len(user_ads)} annunci più recenti:")
     for ad in user_ads:
-        status = ad.get('status_name', 'Bozza')
+        status_map = {
+            'DRAFT': 'Bozza',
+            'SCHEDULED': 'Programmato',
+            'READY': 'Pronto',
+            'PUBLISHED': 'Pubblicato',
+            'SOLD': 'Venduto',
+            'DELETED': 'Eliminato'
+        }
+        raw_status = ad.get('status_name', 'DRAFT')
+        status = status_map.get(raw_status, raw_status)
+        
         ad_text = f"🏷️ **{ad['generated_title']}**\nID: `{ad['id_ad']}` | Stato: `{status}`"
-        await message.answer(ad_text, parse_mode="Markdown", reply_markup=kb.get_ad_manage_kb(ad['id_ad'], status))
+        await message.answer(ad_text, parse_mode="Markdown", reply_markup=kb.get_ad_manage_kb(ad['id_ad'], raw_status)) # Pass raw status for logic
         await asyncio.sleep(0.1)
 
 # --- 3. Ad Editing FSM ---
@@ -436,7 +515,19 @@ async def view_ad_details_handler(callback: CallbackQuery, state: FSMContext):
             except (ValueError, TypeError):
                 return "Data non valida"
 
-        status = ad_details.get('status_name', 'Bozza')
+        # Translation Map
+        status_map = {
+            'DRAFT': 'Bozza',
+            'SCHEDULED': 'Programmato',
+            'READY': 'Pronto',
+            'PUBLISHED': 'Pubblicato',
+            'SOLD': 'Venduto',
+            'DELETED': 'Eliminato'
+        }
+        
+        raw_status = ad_details.get('status_name', 'DRAFT')
+        status = status_map.get(raw_status, raw_status) # Fallback to raw if not found
+        
         price = f"{ad_details.get('suggested_price'):.2f} €" if ad_details.get('suggested_price') is not None else "Non impostato"
 
         details_text = (
