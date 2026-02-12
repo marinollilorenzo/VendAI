@@ -98,6 +98,13 @@ async def global_menu_handler(message: Message, state: FSMContext):
 async def start_handler(message: Message, state: FSMContext):
     await state.clear()
     await db.get_or_create_user(message.from_user.id, message.from_user.username, message.from_user.full_name)
+    
+    # Check for initial credits bonus (Test Mode)
+    credits = await db.get_user_credits(message.from_user.id)
+    if credits == 0:
+        await db.add_test_credits(message.from_user.id, 100)
+        await message.answer("🎁 **Bonus Benvenuto!** Hai ricevuto 100 crediti per testare il bot.")
+
     welcome_text = (
         f"Ciao {message.from_user.first_name}, benvenuto su **VendAI**! 🤖✨\n\n"
         "Premi **🆕 Crea Annuncio** o invia una foto con didascalia per iniziare!"
@@ -123,6 +130,21 @@ async def back_to_main_menu_callback(callback: CallbackQuery, state: FSMContext)
     await callback.message.delete()
     await callback.message.answer("Sei nel menu principale.", reply_markup=kb.get_main_menu())
     await callback.answer()
+
+@router.callback_query(F.data.startswith("sub:"))
+async def sub_selection_handler(callback: CallbackQuery):
+    """
+    Handles subscription plan selection.
+    For testing purposes, this adds 10 credits to the user.
+    """
+    # plan_id = int(callback.data.split(":")[1]) # Not used in test logic
+    user_id = callback.from_user.id
+    
+    await db.add_test_credits(user_id, 10)
+    new_balance = await db.get_user_credits(user_id)
+    
+    await callback.answer("💎 Piano attivato (TEST)!")
+    await callback.message.answer(f"💎 Piano selezionato! Ti sono stati accreditati 10 crediti per il test. Saldo attuale: {new_balance}")
 
 # --- 1. Ad Creation FSM ---
 async def start_ad_creation(message: Message, state: FSMContext):

@@ -755,3 +755,54 @@ class DatabaseManager:
         new_subscription_id = await self._execute_query(query, params)
         logger.info(f"New subscription {new_subscription_id} added for user {id_telegram_user} with {initial_credits} credits, ending on {end_date_iso}.")
         return new_subscription_id
+
+    async def add_test_credits(self, id_telegram_user: int, amount: int):
+        """
+        Adds credits to a user for testing purposes.
+        If an active subscription exists, adds to it.
+        If not, creates a new 'test' subscription (id_account_type=1) with the given amount.
+        """
+        now_iso = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Check for active subscription
+        sub_query = """
+        SELECT id_subscription
+        FROM subscription
+        WHERE id_telegram_user = ? AND subscription_end_datetime > ?
+        ORDER BY subscription_start_datetime DESC
+        LIMIT 1
+        """
+        subscription = await self._fetch_one(sub_query, (id_telegram_user, now_iso))
+        
+        if subscription:
+            # Update existing
+            update_query = """
+            UPDATE subscription
+            SET credits_balance = credits_balance + ?
+            WHERE id_subscription = ?
+            """
+            await self._execute_query(update_query, (amount, subscription['id_subscription']))
+            logger.info(f"Added {amount} test credits to existing subscription {subscription['id_subscription']} for user {id_telegram_user}.")
+        else:
+            # Create new test subscription
+            # We assume id_account_type=1 exists (Free/Test plan)
+            start_date = datetime.now()
+            end_date = start_date + timedelta(days=30)
+            start_date_iso = start_date.strftime("%Y-%m-%d %H:%M:%S")
+            end_date_iso = end_date.strftime("%Y-%m-%d %H:%M:%S")
+            
+            query = """
+            INSERT INTO subscription (subscription_start_datetime, subscription_end_datetime, credits_balance,
+                                      id_telegram_user, id_account_type, id_transaction)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """
+            # Pass None for id_transaction
+            params = (start_date_iso, end_date_iso, amount, id_telegram_user, 1, None)
+            try:
+                await self._execute_query(query, params)
+                logger.info(f"Created new test subscription for user {id_telegram_user} with {amount} credits.")
+            except Exception as e:
+                logger.error(f"Failed to create test subscription: {e}")
+                # Fallback: maybe account_type 1 doesn't exist? Try to update user directly? No, schema enforces subscription.
+                # Use account_type 2 if 1 fails?
+                # For now, we log error.
