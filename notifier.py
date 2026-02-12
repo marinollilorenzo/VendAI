@@ -12,16 +12,6 @@ from database import DatabaseManager
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("Notifier")
 
-# Carica variabili d'ambiente
-TOKEN = config.BOT_TOKEN
-
-if not TOKEN:
-    logger.error("❌ TOKEN non trovato nel file .env!")
-    exit(1)
-
-bot = Bot(token=TOKEN)
-db = DatabaseManager()
-
 def get_publish_kb(id_pub):
     """Crea il bottone per la pubblicazione immediata"""
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -29,7 +19,7 @@ def get_publish_kb(id_pub):
     ])
     return keyboard
 
-async def check_and_notify():
+async def check_and_notify(bot: Bot, db: DatabaseManager):
     logger.info("🔍 Controllo scadenze...")
     
     try:
@@ -133,19 +123,15 @@ async def check_and_notify():
         except Exception as e:
             logger.error(f"Errore final notify {pub['id_publication_ad']}: {e}")
 
-async def main_loop():
+async def main_loop(bot: Bot):
     logger.info("🟢 Guardiano Notifiche Avviato")
+    db = DatabaseManager()
     try:
         while True:
-            await check_and_notify()
+            await check_and_notify(bot, db)
             await asyncio.sleep(60)
     except KeyboardInterrupt:
         logger.info("🔴 Guardiano fermato manualmente")
-    finally:
-        await bot.session.close()
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main_loop())
-    except (KeyboardInterrupt, SystemExit):
-        pass
+    pass

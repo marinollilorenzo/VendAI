@@ -5,7 +5,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 
 # --- IMPORT MODULI PERSONALI ---
-from config import config  # <--- Importiamo la config
+from config import config
 from database import DatabaseManager
 from handlers import router as main_router
 from notifier import main_loop as notifier_loop
@@ -41,7 +41,7 @@ async def main():
     await bot.delete_webhook(drop_pending_updates=True)
 
     bot_task = asyncio.create_task(dp.start_polling(bot))
-    notify_task = asyncio.create_task(notifier_loop())
+    notify_task = asyncio.create_task(notifier_loop(bot))
 
     logger.info("✅ Bot e Notifier sono attivi.")
 
