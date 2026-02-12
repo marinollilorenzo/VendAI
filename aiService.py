@@ -1,135 +1,106 @@
+import logging
+from pydantic import BaseModel, ValidationError
 from google import genai
-from pydantic import BaseModel
 from google.genai import types
-import asyncio
-import json
-import os
-from dotenv import load_dotenv
+from config import config
 
-load_dotenv()
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-class output(BaseModel):
+# --- Pydantic Model for Structured Output ---
+class AdOutput(BaseModel):
     title: str
     description: str
     price: float
+
+# --- Global Client Initialization ---
+# Initialize the client once to be reused across function calls.
+if not config.GEMINI_API_KEY:
+    logger.error("❌ GEMINI_API_KEY not found! Please set it in the .env file.")
+    client = None
+else:
+    try:
+        client = genai.Client(api_key=config.GEMINI_API_KEY)
+        logger.info("✅ Gemini Client initialized successfully.")
+    except Exception as e:
+        logger.error(f"Error initializing Gemini Client: {e}")
+        client = None
+
+async def ad_text_generator(product_description: str, foto_bytes: bytes = None) -> AdOutput | dict:
+    """
+    Generates a structured ad (title, description, price) using Gemini.
+    It uses the google-genai SDK with native async support and structured output.
+    """
+    if not client:
+        return {
+            "title": "Errore di Configurazione",
+            "description": "API Key di Gemini non configurata. Contatta l'amministratore.",
+            "price": 0.0
+        }
+
+    # Optimized prompt for the Italian market.
+    prompt_text = f"""
+    Act as an expert Italian online seller. Analyze the image and user text to create a perfect ad.
     
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-async def ad_text_generator(product_description, foto_bytes=None):
-    """
-    Questa funzione prende una descrizione (e opzionalmente un'immagine) e restituisce un annuncio strutturato.
-    """
-
-    if GEMINI_API_KEY:
-        client = genai.Client(api_key=GEMINI_API_KEY)
-    else:
-        print("Error in recovering the GEMINI_API_KEY in .env file")
+    1. **Visual Analysis (High Priority):**
+       - Identify the item, brand, model, color, and cosmetic condition.
+       - Look for any defects or included accessories.
     
-    prompt = f"""
-        Segui rigorosamente queste istruzioni ottimizzate per un'esecuzione efficiente e coerente:
-
-        1. **Analisi dell'Immagine Allegata (PRIORITARIO):**
-            - Identifica con precisione l’oggetto (categoria, marca/modello se visibile).
-            - Rileva il colore, le condizioni generali (segni d’uso, difetti o eventuali elementi come scatola/originalità), dimensioni stimate o proporzioni.
-            - Nota qualsiasi dettaglio distintivo o valore aggiunto (es. edizione limitata, accessori inclusi).
-            - Utilizza algoritmi di visione artificiale per massima accuratezza.
-
-        2. **Analisi del Testo Utente** :
-            - Includi solo se aggiunge dati non evidenti dalla foto (es. anno di acquisto, funzionalità specifiche, motivo della vendita).
-            - Ignora ripetizioni o dati già visibili.
-
-        3. **Generazione Annuncio (Seguendo il formato obbligatorio sotto):**
-            - Combina dati da foto e testo solo se apportano valore informativo aggiuntivo.
-            - Usa uno stile chiaro, dettagliato e accattivante. Nessun linguaggio vago o promozionale.
-            **TONO:** Sii DIRETTO, INFORMATIVO e NATURALE, come un venditore privato. Registro linguistico medio.
-
-        Testo Utente: "{product_description}"
-        
-        Formato UFFICIALE da rispettare ESATTAMENTE in output per popolare i campi:
-
-        1.  **title (string):**
-        - Titolo generato sull’oggetto principale identificato dalla foto ricco di parole chiave
-        - Usa uno stile chiaro e commerciale (es.Vinted).
-
-        2.  **description (string):**
-        - Scrivi una descrizione amichevole e dettagliata.
-        - inserire testo utente solo se aggiunge info extra
-        - ALLA FINE della descrizione, INCLUDI SEMPRE un elenco puntato formattato usando i caratteri '\n' (a capo) in questo modo:
-        
-        \n\nOggetto: [Nome preciso, anche con marca/modello]
-        \nCaratteristiche: [Condizioni, colore, dimensioni o altre specifiche fisiche e funzionali]
-        \nDettagli: [Un dettaglio visivo chiave visto in foto che può elevare il valore]
-
-        3.  **price (float):**
-        - Fornisci una stima di prezzo realistica in Euro
-        - fondata sui dati di mercato dell'usato, tenendo conto delle condizioni, del modello/marca e di eventuali dettagli extra
-        - usa fonti aggiornate o dataset di annunci usati se disponibili
-        - Restituisci **SOLO UN SINGOLO NUMERO** (es. 25.0, 150, 22.50).
-        - NON INCLUDERE "€", testo, o qualsiasi altro carattere non numerico. L'output per questo campo deve essere un numero JSON valido, non una stringa.
-        
-        **Note aggiuntive per l'IA:**
-        - Ignora qualsiasi informazione priva di riscontro visivo o non verificabile.
-        - Mantieni output coerente e privo di errori di formattazione o linguaggio.
-        - Assicurati che ogni sezione sia sempre presente e rispettata, anche in caso di informazioni mancanti.
-        - Adatta il registro linguistico all'ambito commerciale online (es. Subito, eBay, Facebook Marketplace).
+    2. **User Text Analysis:** "{product_description}"
+       - Integrate this info only if it adds non-visible details (e.g., purchase year, reason for selling).
+       
+    3. **Required JSON Output:**
+       - `title` (string): A catchy title optimized for search algorithms (e.g., Vinted/Subito), max 60 chars.
+       - `description` (string): A fluid, persuasive, and honest paragraph. DO NOT use bullet points; write like a human. Use emojis moderately.
+       - `price` (float): A realistic estimate in Euros for the used item. CRITICAL: Output ONLY a single number, DO NOT include "€" or any other text.
     """
-    contents_list = [prompt]
-    immagine_caricata_correttamente = False
+
+    # Build the content parts for the request
+    parts = [types.Part.from_text(text=prompt_text)]
     if foto_bytes:
         try:
-            image = types.Part.from_bytes(
-                data=foto_bytes, mime_type="image/jpeg"
-            )
-            contents_list.append(image)
-            immagine_caricata_correttamente = True
+            image_part = types.Part.from_bytes(data=foto_bytes, mime_type="image/jpeg")
+            parts.insert(0, image_part) # Place the image before the text prompt
         except Exception as e:
-            print(f"Errore nel caricamento dell'immagine: {e}")
+            logger.error(f"Error loading image bytes: {e}")
     
-    # Se l'immagine non è stata caricata E il testo è vago, restituisci un errore
-    if not immagine_caricata_correttamente and len(product_description) < 15:
-         return "Titolo: Errore\nDescrizione: Immagine non valida e testo troppo vago."
-    
-    
+    contents = [types.Content(role="user", parts=parts)]
+
     try:
-        response = await asyncio.to_thread(
-            client.models.generate_content,
-            model="gemini-2.5-flash",
-            contents=contents_list,
-            config={
-                "response_mime_type": "application/json",
-                "response_schema": output
-            }
+        # Native async call with structured output (Pydantic)
+        response = await client.aio.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=contents,
+            generation_config=types.GenerationConfig(
+                response_mime_type="application/json",
+                response_schema=AdOutput,
+                temperature=0.7 
+            )
         )
-        if hasattr(response, 'parsed') and response.parsed:
-            # response.parsed è già un oggetto OutputSchema (o un dizionario)
-            if isinstance(response.parsed, output):
-                return response.parsed
-            else:
-                # Se è un dizionario, lo validiamo
-                return output(**response.parsed)
+
+        if response.parsed:
+             return response.parsed
         else:
-            # Fallback se .parsed non esiste
-            print("Attenzione: .parsed non trovato, uso .text")
-            json_output = json.loads(response.text)
-            return output(**json_output)
+            logger.warning("Automatic parsing failed, attempting manual JSON parsing.")
+            return AdOutput.model_validate_json(response.text)
+
+    except ValidationError as e:
+        logger.error(f"Pydantic validation failed: {e}. Raw response: {getattr(e, 'raw_response', 'N/A')}")
+        return {
+            "title": "Errore di Formato IA",
+            "description": "L'IA non ha risposto nel formato JSON corretto. Prova a riformulare la richiesta.",
+            "price": 0.0
+        }
     except Exception as e:
-        print(f"Errore chiamata API Gemini o parsing: {e}")
-        error_str = str(e) # Convertiamo l'errore in stringa
-        if "503" in error_str or "UNAVAILABLE" in error_str or "overloaded" in error_str:
-            return {
-                "title": "Errore 503", 
-                "description": "L'IA è momentaneamente sovraccarica. 😅 Per favore, riprova tra qualche minuto!", 
-                "price": "N/D"
-            }
-        if "Quota exceeded" in error_str:
-            return {"title": "Errore Quota", "description": "Limite piano gratuito superato.", "price": "N/D"}
+        logger.error(f"Gemini generation error: {e}")
+        error_msg = str(e).lower()
         
-        if "ValidationError" in error_str or isinstance(e, json.JSONDecodeError):
-             raw_text = "N/D"
-             try: raw_text = response.text
-             except: pass
-             print(f"Errore validazione/JSON: {e}")
-             print(f"Risposta grezza: {raw_text}")
-             return {"title": "Errore Schema", "description": "L'IA non ha rispettato il formato JSON.", "price": "N/D"}
-        # Errore generico
-        return {"title": "Errore API", "description": f"Chiamata fallita: {e}", "price": "N/D"}
+        if "429" in error_msg or "quota" in error_msg:
+             return {"title": "Limite Raggiunto", "description": "Troppe richieste in poco tempo. Riprova tra poco.", "price": 0.0}
+        
+        return {
+            "title": "Errore Generico IA",
+            "description": "Non sono riuscito a generare l'annuncio. Riprova, magari con una foto più chiara o una descrizione diversa.",
+            "price": 0.0
+        }
