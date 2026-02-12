@@ -4,3 +4,5 @@ annunci.db
 .DS_Store
 test_db.py
 __pycache__
+annunci.db-shm
+annunci.db-wal

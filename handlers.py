@@ -196,11 +196,35 @@ async def edit_creation_field(callback: CallbackQuery, state: FSMContext):
     field = callback.data.split(":")[0].split("_")[-1] # title, description, price
     await state.update_data(field_to_edit=field)
     
-    # Translation
+    # Recuperiamo i dati attuali dallo stato per pre-compilare il tasto
+    data = await state.get_data()
+    current_value = ""
+    if field == 'title':
+        current_value = data.get('draft_title', '')
+    elif field == 'description':
+        current_value = data.get('draft_description', '')
+    elif field == 'price':
+        current_value = str(data.get('draft_price', ''))
+
+    # Traduzione etichetta
     field_map = {"title": "Titolo", "description": "Descrizione", "price": "Prezzo"}
     field_label = field_map.get(field, field.capitalize())
     
-    await callback.message.edit_text(f"Invia il nuovo {field_label}:")
+    # Costruiamo la tastiera con il pulsante "Copia vecchio valore"
+    builder = InlineKeyboardBuilder()
+    if current_value:
+        # switch_inline_query_current_chat inserisce il testo nella barra di input dell'utente
+        builder.button(
+            text=f"✏️ Copia e modifica attuale", 
+            switch_inline_query_current_chat=str(current_value)
+        )
+    
+    await callback.message.delete() # Puliamo il menu precedente per ordine
+    await callback.message.answer(
+        f"Inviami il nuovo valore per **{field_label}**.\n"
+        "👇 Premi il tasto sotto per modificare quello esistente senza riscriverlo.",
+        reply_markup=builder.as_markup()
+    )
     await state.set_state(AdCreation.WAITING_EDIT_VALUE)
     await callback.answer()
 
@@ -210,13 +234,20 @@ async def save_creation_edit(message: Message, state: FSMContext):
     field = data['field_to_edit']
     value = message.text
     
+    # PULIZIA: Rimuoviamo il tag del bot se l'utente ha usato il tasto rapido
+    bot_user = await message.bot.get_me()
+    bot_mention = f"@{bot_user.username}"
+    if value.startswith(bot_mention):
+        value = value.replace(bot_mention, "").strip()
+
     key = None
     if field == 'price':
         try:
+            # Sostituisce virgola con punto e converte
             value = float(value.replace(',', '.'))
             key = 'draft_price'
         except:
-            await message.answer("Prezzo non valido.")
+            await message.answer("❌ Prezzo non valido. Inserisci un numero (es. 12.50).")
             return
     elif field == 'title':
         key = 'draft_title'
@@ -226,7 +257,7 @@ async def save_creation_edit(message: Message, state: FSMContext):
     if key:
         await state.update_data({key: value})
     
-    await message.answer("✅ Modificato!", reply_markup=kb.get_edit_menu_kb(0))
+    await message.answer("✅ Modificato!", reply_markup=kb.get_edit_menu_kb(0)) # 0 è dummy ID
     await state.set_state(AdCreation.WAITING_EDIT_CHOICE)
 
 @router.callback_query(AdCreation.WAITING_EDIT_CHOICE, F.data.startswith("finish_edit:"))
@@ -389,15 +420,47 @@ async def edit_ad_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 @router.callback_query(AdEditing.CHOOSING_FIELD, F.data.startswith("edit_field_"))
+@router.callback_query(AdEditing.CHOOSING_FIELD, F.data.startswith("edit_field_"))
 async def edit_field_ask_new_value(callback: CallbackQuery, state: FSMContext):
     field_to_edit = callback.data.split(":")[0].split("_")[-1]
     await state.update_data(field_to_edit=field_to_edit)
     
-    # Translation
+    # Recuperiamo l'ID annuncio dallo stato
+    data = await state.get_data()
+    ad_id = data.get('ad_id_to_edit')
+
+    # Recuperiamo il valore ATTUALE dal database per pre-compilarlo
+    current_value = ""
+    try:
+        ad_details = await db.get_ad_details(ad_id, callback.from_user.id)
+        if ad_details:
+            if field_to_edit == 'title':
+                current_value = ad_details.get('generated_title', '')
+            elif field_to_edit == 'description':
+                current_value = ad_details.get('generated_description', '')
+            elif field_to_edit == 'price':
+                current_value = str(ad_details.get('suggested_price', ''))
+    except Exception as e:
+        logging.error(f"Errore recupero valore attuale edit: {e}")
+
+    # Traduzione
     field_map = {"title": "Titolo", "description": "Descrizione", "price": "Prezzo"}
     field_label = field_map.get(field_to_edit, field_to_edit.capitalize())
     
-    await callback.message.edit_text(f"OK, inviami il nuovo valore per **{field_label}**.")
+    # Costruiamo il bottone magico
+    builder = InlineKeyboardBuilder()
+    if current_value:
+        builder.button(
+            text="✏️ Copia e modifica attuale", 
+            switch_inline_query_current_chat=str(current_value)
+        )
+
+    await callback.message.delete()
+    await callback.message.answer(
+        f"OK, inviami il nuovo valore per **{field_label}**.\n"
+        "👇 Usa il tasto per modificare il testo attuale.",
+        reply_markup=builder.as_markup()
+    )
     await state.set_state(AdEditing.WAITING_NEW_VALUE)
     await callback.answer()
 
@@ -411,13 +474,22 @@ async def edit_field_save_new_value(message: Message, state: FSMContext):
     ad_id = data['ad_id_to_edit']
     new_value = message.text
 
+    # PULIZIA: Rimuoviamo il tag del bot se l'utente ha usato il tasto rapido
+    bot_user = await message.bot.get_me()
+    bot_mention = f"@{bot_user.username}"
+    if new_value.startswith(bot_mention):
+        new_value = new_value.replace(bot_mention, "").strip()
+
     try:
+        update_data = {}
         if field == 'price':
             price = float(new_value.replace(',', '.'))
             update_data = {"suggested_price": price}
         else:
             # For fields like 'title' and 'description'
-            update_data = {f"generated_{field}": new_value}
+            # Mappa i campi FSM ai nomi colonne DB corretti
+            db_field = "generated_title" if field == 'title' else "generated_description"
+            update_data = {db_field: new_value}
 
         await db.update_ad_details(ad_id, message.from_user.id, **update_data)
         await message.answer(f"✅ {field.capitalize()} aggiornato!", reply_markup=kb.get_edit_menu_kb(ad_id))
@@ -515,60 +587,29 @@ async def delete_ad_confirm(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(f"Sei sicuro di voler eliminare l'annuncio #{ad_id}?", reply_markup=kb.get_confirmation_kb("delete", ad_id))
     await state.set_state(AdDeleting.WAITING_CONFIRMATION)
     await callback.answer()
-    
 @router.callback_query(AdDeleting.WAITING_CONFIRMATION, F.data.startswith("confirm_delete:"))
 async def delete_ad_execute(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     ad_id = data['ad_id_to_delete']
     
-    # 1. Eseguiamo la pulizia nel DB
+    # 1. Eseguiamo l'eliminazione nel DB
     success = await db.mark_ad_as_deleted(ad_id)
     
     if success:
-        # Conferma visiva immediata eliminando i tasti
-        await callback.message.edit_text(f"🗑️ Annuncio #{ad_id} eliminato.")
+        # 2. EFFETTO "POOF": Cancelliamo fisicamente il messaggio dalla chat
+        try:
+            await callback.message.delete()
+            # Mostriamo un piccolo popup temporaneo di conferma
+            await callback.answer("🗑️ Annuncio eliminato!", show_alert=False)
+        except Exception as e:
+            # Se per qualche motivo Telegram non fa cancellare il messaggio, modifichiamo il testo
+            logging.error(f"Impossibile cancellare il messaggio: {e}")
+            await callback.message.edit_text("🗑️ Annuncio eliminato.")
     else:
-        await callback.message.edit_text("⚠️ Errore DB durante l'eliminazione.")
+        await callback.answer("⚠️ Errore: Impossibile eliminare l'annuncio.", show_alert=True)
 
     await state.clear()
-    
-    # 2. FIX RICARICA LISTA:
-    # Non possiamo passare callback.message direttamente a my_ads_handler 
-    # perché l'utente mittente sarebbe il bot.
-    # Dobbiamo chiamare la logica della lista manualmente o "truccare" il messaggio.
-    
-    await asyncio.sleep(0.5) # Piccolo delay per assicurare il commit del DB
-    
-    # Recuperiamo gli annunci freschi per l'utente REALE (callback.from_user.id)
-    user_id = callback.from_user.id
-    user_ads = await db.get_user_ads(user_id, limit=20)
-    
-    # Filtriamo (anche se il DB dovrebbe già farlo)
-    user_ads = [ad for ad in user_ads if ad.get('status_name') != 'DELETED']
-
-    if not user_ads:
-        # Se non c'è più nulla, mandiamo un messaggio nuovo
-        await callback.message.answer("Nessun annuncio attivo. Inizia con '🆕 Crea Annuncio'!")
-    else:
-        # Se ce ne sono altri, mostriamo la lista
-        await callback.message.answer(f"Ecco i tuoi {len(user_ads)} annunci attivi:")
-        for ad in user_ads:
-            status_map = {
-                'DRAFT': 'Bozza', 'SCHEDULED': 'Programmato', 'READY': 'Pronto',
-                'PUBLISHED': 'Pubblicato', 'SOLD': 'Venduto', 'DELETED': 'Eliminato'
-            }
-            raw_status = ad.get('status_name', 'DRAFT')
-            status = status_map.get(raw_status, raw_status)
-            
-            ad_text = f"🏷️ **{ad['generated_title']}**\nID: `{ad['id_ad']}` | Stato: `{status}`"
-            await callback.message.answer(
-                ad_text, 
-                parse_mode="Markdown", 
-                reply_markup=kb.get_ad_manage_kb(ad['id_ad'], raw_status)
-            )
-            await asyncio.sleep(0.1)
-
-    await callback.answer()
+    # NOTA: Non richiamiamo più my_ads_handler, così la lista non si duplica.
     
 # --- 6. Stats Handler ---
 @router.message(F.text == "📊 Statistiche", StateFilter(None))
