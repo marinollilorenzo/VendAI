@@ -490,11 +490,17 @@ async def edit_field_save_new_value(message: Message, state: FSMContext):
             # Mappa i campi FSM ai nomi colonne DB corretti
             db_field = "generated_title" if field == 'title' else "generated_description"
             update_data = {db_field: new_value}
-
         await db.update_ad_details(ad_id, message.from_user.id, **update_data)
-        await message.answer(f"✅ {field.capitalize()} aggiornato!", reply_markup=kb.get_edit_menu_kb(ad_id))
-        await state.set_state(AdEditing.CHOOSING_FIELD)
+        label_map = {
+            "title": "Titolo",
+            "description": "Descrizione",
+            "price": "Prezzo"
+        }
+        field_label = label_map.get(field, field.capitalize()) # Fallback se non trova la chiave
 
+        await message.answer(f"✅ **{field_label}** aggiornato!", reply_markup=kb.get_edit_menu_kb(ad_id), parse_mode="Markdown")
+        await state.set_state(AdEditing.CHOOSING_FIELD)
+        
     except ValueError:
         # If price conversion fails
         await message.answer("❌ Prezzo non valido. Inserisci un numero (es. 12.50).")
@@ -635,42 +641,25 @@ async def stats_handler(message: Message):
 @router.callback_query(F.data.startswith("cancel_"))
 async def universal_cancel_handler(callback: CallbackQuery, state: FSMContext):
     """
-    A universal handler to cancel any FSM state and clean up the conversation.
+    Cancella lo stato corrente, elimina il messaggio tecnico e ristabilisce il Menu Principale.
     """
     current_state = await state.get_state()
-    data = await state.get_data()
-    
-    # Try to determine if we were editing a specific ad
-    ad_id = data.get('ad_id_to_edit') or data.get('ad_id_to_delete') or data.get('ad_id_to_publish')
-    
     if current_state is not None:
         logging.info(f"Cancelling state {current_state} via cancel button.")
         await state.clear()
-        await callback.message.edit_text("Operazione annullata.", reply_markup=None)
-    else:
-        # If no state is active, just remove the inline keyboard
-        await callback.message.edit_text(callback.message.text, reply_markup=None)
     
-    # Smart Fallback: if we were working on an ad, show its details/management menu again
-    if ad_id:
-        # We need to construct a callback to reuse the view handler logic, or just call logic directly.
-        # Calling logic directly is cleaner than faking a callback object.
-        # However, reusing the handler requires a CallbackQuery object.
-        # Let's just send a new message with the management menu for that ad.
-        try:
-            ad_details = await db.get_ad_details(ad_id, callback.from_user.id)
-            if ad_details:
-                # Reuse display logic? It's in a handler. 
-                # Let's just send a simple "Back to ad" message.
-                await callback.message.answer(
-                    f"🔙 Torno all'annuncio #{ad_id}",
-                    reply_markup=kb.get_ad_manage_kb(ad_id, ad_details.get('status_name', 'DRAFT'))
-                )
-        except Exception:
-            pass # Ignore errors in fallback
-        
-    await callback.answer("Annullato.")
+    # 1. Cancelliamo il messaggio con i bottoni (es. "Vuoi eliminare?") per pulizia
+    try:
+        await callback.message.delete()
+    except:
+        pass # Se non riesce a cancellare (messaggio troppo vecchio), pazienza
 
+    # 2. Confermiamo l'annullamento e RIMOSTRIAMO LA TASTIERA PRINCIPALE
+    await callback.message.answer(
+        "🚫 Operazione annullata.", 
+        reply_markup=kb.get_main_menu()
+    )
+    await callback.answer()
 
 # --- 5. VISUALIZZAZIONE DETTAGLI ANNUNCIO (NUOVA SEZIONE) ---
 @router.callback_query(F.data.startswith("view_details:"))
