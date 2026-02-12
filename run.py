@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from telegram.ext import Application
 
 # Importiamo la funzione che configura l'applicazione
-from telegramBot import setup_bot_application
+from old_test.telegramBot import setup_bot_application
 # Importiamo il loop del notifier
 from notifier import main_loop as notifier_loop
 # Importiamo l'inizializzazione DB
