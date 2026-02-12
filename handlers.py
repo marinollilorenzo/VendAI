@@ -515,19 +515,61 @@ async def delete_ad_confirm(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(f"Sei sicuro di voler eliminare l'annuncio #{ad_id}?", reply_markup=kb.get_confirmation_kb("delete", ad_id))
     await state.set_state(AdDeleting.WAITING_CONFIRMATION)
     await callback.answer()
+    
 @router.callback_query(AdDeleting.WAITING_CONFIRMATION, F.data.startswith("confirm_delete:"))
 async def delete_ad_execute(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     ad_id = data['ad_id_to_delete']
-    # Chiamiamo la nuova funzione che pulisce TUTTO
-    await db.mark_ad_as_deleted(ad_id)
-    await callback.message.edit_text(f"🗑️ Annuncio #{ad_id} eliminato definitivamente.")
+    
+    # 1. Eseguiamo la pulizia nel DB
+    success = await db.mark_ad_as_deleted(ad_id)
+    
+    if success:
+        # Conferma visiva immediata eliminando i tasti
+        await callback.message.edit_text(f"🗑️ Annuncio #{ad_id} eliminato.")
+    else:
+        await callback.message.edit_text("⚠️ Errore DB durante l'eliminazione.")
+
     await state.clear()
+    
+    # 2. FIX RICARICA LISTA:
+    # Non possiamo passare callback.message direttamente a my_ads_handler 
+    # perché l'utente mittente sarebbe il bot.
+    # Dobbiamo chiamare la logica della lista manualmente o "truccare" il messaggio.
+    
+    await asyncio.sleep(0.5) # Piccolo delay per assicurare il commit del DB
+    
+    # Recuperiamo gli annunci freschi per l'utente REALE (callback.from_user.id)
+    user_id = callback.from_user.id
+    user_ads = await db.get_user_ads(user_id, limit=20)
+    
+    # Filtriamo (anche se il DB dovrebbe già farlo)
+    user_ads = [ad for ad in user_ads if ad.get('status_name') != 'DELETED']
+
+    if not user_ads:
+        # Se non c'è più nulla, mandiamo un messaggio nuovo
+        await callback.message.answer("Nessun annuncio attivo. Inizia con '🆕 Crea Annuncio'!")
+    else:
+        # Se ce ne sono altri, mostriamo la lista
+        await callback.message.answer(f"Ecco i tuoi {len(user_ads)} annunci attivi:")
+        for ad in user_ads:
+            status_map = {
+                'DRAFT': 'Bozza', 'SCHEDULED': 'Programmato', 'READY': 'Pronto',
+                'PUBLISHED': 'Pubblicato', 'SOLD': 'Venduto', 'DELETED': 'Eliminato'
+            }
+            raw_status = ad.get('status_name', 'DRAFT')
+            status = status_map.get(raw_status, raw_status)
+            
+            ad_text = f"🏷️ **{ad['generated_title']}**\nID: `{ad['id_ad']}` | Stato: `{status}`"
+            await callback.message.answer(
+                ad_text, 
+                parse_mode="Markdown", 
+                reply_markup=kb.get_ad_manage_kb(ad['id_ad'], raw_status)
+            )
+            await asyncio.sleep(0.1)
+
     await callback.answer()
-    # Ricarichiamo la lista per far vedere che è sparito
-    # (Opzionale, ma consigliato per feedback immediato)
-    await asyncio.sleep(1)
-    await my_ads_handler(callback.message)
+    
 # --- 6. Stats Handler ---
 @router.message(F.text == "📊 Statistiche", StateFilter(None))
 async def stats_handler(message: Message):

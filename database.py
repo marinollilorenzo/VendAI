@@ -300,31 +300,36 @@ class DatabaseManager:
     async def mark_ad_as_deleted(self, id_ad: int):
         """
         Marks ALL publications associated with an ad as deleted.
-        This ensures the ad disappears completely from lists.
+        FORCE UPDATE: Ignora se è già cancellato, sovrascrive tutto per sicurezza.
         """
-        # 1. Recuperiamo l'ID dello stato 'DELETED'
+        # 1. Recuperiamo ID stato DELETED
         status_query = "SELECT id_status_type FROM status_type WHERE name = 'DELETED'"
         status_res = await self._fetch_one(status_query)
         
+        # Se non trova lo stato, usiamo un ID sicuro o falliamo (qui assumiamo esista o sia 5)
         if not status_res:
-            # Fallback se non esiste lo stato (non dovrebbe succedere)
+            logger.error("Stato DELETED non trovato nel DB!")
             return False
 
         deleted_status_id = status_res['id_status_type']
         now_iso = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # 2. Aggiorniamo TUTTE le righe di pubblicazione per quell'annuncio
-        # La chiave è: WHERE id_ad = ? (e non id_publication_ad)
+        # 2. UPDATE SENZA CONDIZIONI EXTRA
+        # Rimuoviamo "AND deleted_datetime IS NULL" per colpire anche righe zombie
         update_query = """
         UPDATE publication_ad 
         SET deleted_datetime = ?, 
             id_status_type = ?
-        WHERE id_ad = ? AND deleted_datetime IS NULL
+        WHERE id_ad = ?
         """
-        await self._execute_query(update_query, (now_iso, deleted_status_id, id_ad))
-        logger.info(f"Marked all publications for ad {id_ad} as DELETED.")
-        return True
-    
+        try:
+            await self._execute_query(update_query, (now_iso, deleted_status_id, id_ad))
+            logger.info(f"FORCE DELETED all publications for ad {id_ad}.")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting ad {id_ad}: {e}")
+            return False
+        
     async def get_active_ads_for_scheduling(self):
         """
         Retrieves advertisements that are currently scheduled or ready for publication.
