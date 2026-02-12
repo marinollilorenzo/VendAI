@@ -1,4 +1,4 @@
-from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
+from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder, KeyboardButton
 from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup
 from typing import List, Dict, Union
 
@@ -14,34 +14,44 @@ def get_main_menu() -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
     builder.button(text="🆕 Crea Annuncio")
     builder.row(
-        "🛍️ I Miei Annunci",
-        "✅ Segna Venduto"
+        KeyboardButton(text="🛍️ I Miei Annunci"),
+        KeyboardButton(text="✅ Segna Venduto")
     )
     builder.row(
-        "📊 Statistiche",
-        "💎 Abbonamenti"
+        KeyboardButton(text="📊 Statistiche"),
+        KeyboardButton(text="💎 Abbonamenti")
     )
     builder.row(
-        "👤 Profilo",
-        "❓ Aiuto"
+        KeyboardButton(text="👤 Profilo"),
+        KeyboardButton(text="❓ Aiuto")
     )
     return builder.as_markup(resize_keyboard=True)
 
 def get_ad_manage_kb(ad_id: int, status: str) -> InlineKeyboardMarkup:
     """
     Builds an inline keyboard for managing a specific ad.
-    The layout is contextual: the 'Mark as Sold' button is hidden if the ad is already sold.
-    This provides a cleaner and less error-prone user experience.
+    The layout is contextual, grouping buttons logically and hiding non-applicable actions.
     """
     builder = InlineKeyboardBuilder()
+    
+    # Core actions
+    builder.button(text="ℹ️ Dettagli", callback_data=f"view_details:{ad_id}")
     builder.button(text="✏️ Modifica", callback_data=f"edit_ad:{ad_id}")
-    builder.button(text="🗑️ Elimina", callback_data=f"delete_ad:{ad_id}")
-    builder.button(text="📅 Pubblica/Programma", callback_data=f"publish_ad:{ad_id}")
+    
+    # Status-dependent actions
+    # 'Bozza' is the Italian for 'DRAFT' used in the handler
+    if status in ['Bozza', 'DRAFT']:
+        builder.button(text="📅 Pubblica", callback_data=f"publish_ad:{ad_id}")
     
     if status != 'SOLD':
-        builder.button(text="✅ Segna Venduto", callback_data=f"sell_ad:{ad_id}")
+        # This now uses the correct callback data to trigger the existing FSM
+        builder.button(text="✅ Segna Venduto", callback_data=f"sell_select:{ad_id}")
+
+    # Destructive action is always available
+    builder.button(text="🗑️ Elimina", callback_data=f"delete_ad:{ad_id}")
     
-    builder.adjust(2) # Two columns for a compact look
+    # Adjust layout for a clean 2-column grid
+    builder.adjust(2)
     return builder.as_markup()
 
 def get_edit_menu_kb(ad_id: int) -> InlineKeyboardMarkup:
