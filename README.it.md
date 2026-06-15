@@ -16,9 +16,6 @@ Automatizza la parte noiosa della vendita: genera titoli e descrizioni accattiva
 * 🗑️ **Soft Delete:** Non perdi mai i tuoi dati. Gli annunci eliminati possono essere recuperati dal database se necessario.
 
 ## 📸 Demo
-
-*(Sostituisci questa sezione con i tuoi screenshot o GIF)*
-
 | Menu Principale | Creazione con IA | Dashboard Analisi |
 | :---: | :---: | :---: |
 | ![Menu](assets/screenshot-app.PNG) | ![Creation](assets/gif-add.gif) | ![Analytics](assets/gif-analytics.gif) |
