@@ -17,8 +17,6 @@ It automates the tedious part of selling: it generates catchy titles and descrip
 
 ## 📸 Demo
 
-*(Replace this section with your own screenshots or GIFs)*
-
 | Main Menu | AI Creation | Analytics Dashboard |
 | :---: | :---: | :---: |
 | ![Menu](assets/screenshot-app.PNG) | ![Creation](assets/gif-add.gif) | ![Analytics](assets/gif-analytics.gif) |
