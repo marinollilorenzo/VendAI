@@ -21,7 +21,7 @@ Automatizza la parte noiosa della vendita: genera titoli e descrizioni accattiva
 
 | Menu Principale | Creazione con IA | Dashboard Analisi |
 | :---: | :---: | :---: |
-| ![Menu](assets/screenshot_menu.png) | ![Creazione](assets/screenshot_crea.png) | ![Analisi](assets/screenshot_analisi.png) |
+| ![Menu](assets/screenshot-app.PNG) | ![Creation](assets/gif-add.gif) | ![Analytics](assets/gif-analytics.gif) |
 
 ## 🛠️ Installazione
 
@@ -34,7 +34,7 @@ Automatizza la parte noiosa della vendita: genera titoli e descrizioni accattiva
 
 1.  **Clona il repository:**
     ```bash
-    git clone [https://github.com/marinollilorenzo/VendAI.git](https://github.com/marinollilorenzo/VendAI.git)
+    git clone [https://github.com/marinollilorenzo/VendAI.git]
     cd VendAI
     ```
 

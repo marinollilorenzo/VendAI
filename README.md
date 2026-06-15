@@ -21,7 +21,7 @@ It automates the tedious part of selling: it generates catchy titles and descrip
 
 | Main Menu | AI Creation | Analytics Dashboard |
 | :---: | :---: | :---: |
-| ![Menu](assets/screenshot_menu.png) | ![Creation](assets/screenshot_crea.png) | ![Analytics](assets/screenshot_analisi.png) |
+| ![Menu](assets/screenshot-app.PNG) | ![Creation](assets/gif-add.gif) | ![Analytics](assets/gif-analytics.gif) |
 
 ## 🛠️ Installation
 
@@ -34,7 +34,7 @@ It automates the tedious part of selling: it generates catchy titles and descrip
 
 1.  **Clone the repository:**
     ```bash
-    git clone [https://github.com/marinollilorenzo/VendAI.git](https://github.com/marinollilorenzo/VendAI.git)
+    git clone [https://github.com/marinollilorenzo/VendAI.git]
     cd VendAI
     ```
 
